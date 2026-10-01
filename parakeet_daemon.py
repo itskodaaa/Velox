@@ -291,6 +291,10 @@ def sanitize_transcription(raw_text: str, duration_sec: float = 0.0, rms: float 
     if re.match(r"^[\(\[\{].*?[\)\]\}]$", text):
         return ""
 
+    # Strip trailing YouTube silence hallucinations from the end of sentences (common Whisper artifact)
+    text = re.sub(r"(?i)\s*(?:thanks|thank you)\s+for\s+watching[!.]*$", "", text).strip()
+    text = re.sub(r"(?i)\s*(?:please\s+)?subscribe(?:\s+to\s+(?:the|my)\s+channel)?[!.]*$", "", text).strip()
+
     # 2. De-loop immediate consecutive identical token repeats (e.g. '3k, 3k, 3k, 3k' -> '3k')
     # Match any word base repeating 3 or more times consecutively with optional punctuation
     def repl_token(m):

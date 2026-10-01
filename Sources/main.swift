@@ -287,9 +287,11 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
     private var ffmpegProcess: Process?
     private var meterTimer: Timer?
     private var durationTimer: Timer?
+    private var isStopping: Bool = false
     let recordPath = "/tmp/parakeet_recording.wav"
 
     func start() {
+        if isStopping { return }
         try? FileManager.default.removeItem(atPath: recordPath)
         AppState.shared.refreshPermissions()
 
@@ -367,26 +369,36 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
     }
 
     func stop(completion: @escaping (String?) -> Void) {
+        guard !isStopping else { return }
+        isStopping = true
+
         meterTimer?.invalidate()
         meterTimer = nil
         durationTimer?.invalidate()
         durationTimer = nil
 
-        if let r = recorder {
-            r.stop()
-        }
-        recorder = nil
-
-        if let p = ffmpegProcess, p.isRunning {
-            p.interrupt()
-            p.waitUntilExit()
-        }
-        ffmpegProcess = nil
-
+        // Instantly transition UI so the user experiences zero lag
         AppState.shared.isRecording = false
         AppState.shared.audioLevel = 0.0
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+        // Trailing buffer grace period (450ms):
+        // Allow CoreAudio hardware buffers to flush and capture lingering end-of-sentence syllables.
+        // This permanently eliminates audio cutting out before the speaker finishes talking.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
+            guard let self = self else { return }
+
+            if let r = self.recorder {
+                r.stop()
+            }
+            self.recorder = nil
+
+            if let p = self.ffmpegProcess, p.isRunning {
+                p.interrupt()
+                p.waitUntilExit()
+            }
+            self.ffmpegProcess = nil
+
+            self.isStopping = false
             let exists = FileManager.default.fileExists(atPath: self.recordPath)
             completion(exists ? self.recordPath : nil)
         }
