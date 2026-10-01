@@ -78,6 +78,10 @@ final class AppState: ObservableObject {
         }
     }
 
+    private init() {
+        loadConfigFromDisk()
+    }
+
     private var configURL: URL {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".parakeetflow/config.json")
     }
@@ -114,25 +118,29 @@ final class AppState: ObservableObject {
     }
 
     func saveConfigToDisk() {
-        let payload: [String: Any] = [
-            "stt_engine": self.sttEngine,
-            "groq_key": self.groqKey,
-            "provider": self.provider,
-            "openrouter_key": self.openRouterKey,
-            "openrouter_model": self.openRouterModel,
-            "ollama_url": self.ollamaUrl,
-            "ollama_model": self.ollamaModel,
-            "lmstudio_url": self.lmStudioUrl,
-            "lmstudio_model": self.lmStudioModel,
-            "use_llm_polish": self.useLlmPolish,
-            "custom_vocab": self.customVocab,
-            "hud_position": self.hudPosition,
-            "hud_size": self.hudSize,
-            "hud_character": self.hudCharacter,
-            "hud_color": self.hudColor,
-            "hud_always_show": self.alwaysShowCompanion,
-            "hud_y_offset": self.hudYOffset
-        ]
+        var payload: [String: Any] = [:]
+        if let data = try? Data(contentsOf: configURL),
+           let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            payload = existing
+        }
+        payload["stt_engine"] = self.sttEngine
+        if !self.groqKey.isEmpty { payload["groq_key"] = self.groqKey }
+        payload["provider"] = self.provider
+        if !self.openRouterKey.isEmpty { payload["openrouter_key"] = self.openRouterKey }
+        payload["openrouter_model"] = self.openRouterModel
+        payload["ollama_url"] = self.ollamaUrl
+        payload["ollama_model"] = self.ollamaModel
+        payload["lmstudio_url"] = self.lmStudioUrl
+        payload["lmstudio_model"] = self.lmStudioModel
+        payload["use_llm_polish"] = self.useLlmPolish
+        payload["custom_vocab"] = self.customVocab
+        payload["hud_position"] = self.hudPosition
+        payload["hud_size"] = self.hudSize
+        payload["hud_character"] = self.hudCharacter
+        payload["hud_color"] = self.hudColor
+        payload["hud_always_show"] = self.alwaysShowCompanion
+        payload["hud_y_offset"] = self.hudYOffset
+
         if let data = try? JSONSerialization.data(withJSONObject: payload, options: .prettyPrinted) {
             try? data.write(to: configURL)
         }
@@ -480,18 +488,29 @@ final class DictationService {
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = bodyData
-        req.timeoutInterval = 35.0
+        req.timeoutInterval = 90.0
 
         let tStart = Date()
-        URLSession.shared.dataTask(with: req) { data, _, _ in
+        URLSession.shared.dataTask(with: req) { data, resp, err in
             DispatchQueue.main.async {
                 AppState.shared.isProcessing = false
+                if let err = err {
+                    print("[DictationService] Request error: \(err.localizedDescription)")
+                    AppState.shared.statusText = "Error: \(err.localizedDescription)"
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                        AppState.shared.statusText = ""
+                        FloatingHUDController.shared.hide()
+                    }
+                    return
+                }
+
                 guard let data = data,
                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       let finalText = json["final_text"] as? String,
                       !finalText.isEmpty else {
-                    AppState.shared.statusText = "No speech detected"
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                    let errMsg = (try? JSONSerialization.jsonObject(with: data ?? Data()) as? [String: Any])?["error"] as? String
+                    AppState.shared.statusText = errMsg ?? "No speech detected"
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                         AppState.shared.statusText = ""
                         FloatingHUDController.shared.hide()
                     }

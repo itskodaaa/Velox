@@ -552,6 +552,8 @@ def polish_text_unified(raw_text: str, cfg: dict) -> tuple[str, float, str]:
 
     elif provider == "groq":
         key = cfg.get("groq_key", "").strip()
+        if not key:
+            key = load_config().get("groq_key", "").strip()
         model = cfg.get("groq_polish_model", "qwen/qwen3.8-27b").strip()
         if not key:
             return wispr_smart_format(raw_text), 0.0, "fallback (No Groq key)"
@@ -746,7 +748,9 @@ def inference_worker():
                 cues.append(context_text[:120])
             prompt_str = ", ".join([c.strip() for c in cues if c.strip()])
 
-            groq_key = req_config.get("groq_key", "")
+            groq_key = (req_config.get("groq_key") or "").strip()
+            if not groq_key:
+                groq_key = (load_config().get("groq_key") or "").strip()
             use_groq = bool(groq_key and req_config.get("stt_engine", "groq") != "local_mlx")
             raw_text = ""
             stt_ms = 0.0
@@ -2418,13 +2422,13 @@ class DaemonHandler(BaseHTTPRequestHandler):
             cfg = load_config()
             audio_path = req.get("audio_path", "")
 
-            # Merge request overrides with stored config
+            # Merge request overrides with stored config (only non-empty values)
             merged_config = cfg.copy()
             for k in ("provider", "openrouter_key", "openrouter_model", "ollama_url", "ollama_model",
                       "lmstudio_url", "lmstudio_model", "use_llm_polish", "custom_vocab",
                       "stt_engine", "groq_key", "groq_model", "groq_polish_model",
                       "context_app", "context_title", "context_selected_text"):
-                if k in req:
+                if k in req and req[k] is not None and str(req[k]).strip() != "":
                     merged_config[k] = req[k]
 
             if not audio_path or not os.path.exists(audio_path):
@@ -2434,7 +2438,7 @@ class DaemonHandler(BaseHTTPRequestHandler):
             res_q = queue.Queue()
             TASK_QUEUE.put((audio_path, merged_config, res_q))
             try:
-                success, data = res_q.get(timeout=35.0)
+                success, data = res_q.get(timeout=90.0)
                 self._send_json(200 if success else 500, data)
             except queue.Empty:
                 self._send_json(504, {"error": "Inference timed out"})
