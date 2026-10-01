@@ -45,6 +45,7 @@ final class AppState: ObservableObject {
     @AppStorage("hud_color") var hudColor: String = "amber"         // "amber", "rose", "emerald", "cyan", "purple", "monochrome"
     @AppStorage("hud_always_show") var alwaysShowCompanion: Bool = true // Desktop pet companion mode
     @AppStorage("hud_y_offset") var hudYOffset: Double = 0.0        // User nudge from dock/bottom
+    @AppStorage("hud_listening_style") var listeningStyle: String = "morph" // "morph", "character", "waveform"
     @Published var isHUDDragging: Bool = false
     @Published var isHUDHovered: Bool = false
     @Published var isPetHappy: Bool = false
@@ -114,6 +115,7 @@ final class AppState: ObservableObject {
         if let hcol = json["hud_color"] as? String, !hcol.isEmpty { self.hudColor = hcol }
         if let halways = json["hud_always_show"] as? Bool { self.alwaysShowCompanion = halways }
         if let hyoff = json["hud_y_offset"] as? Double { self.hudYOffset = hyoff }
+        if let lstyle = json["hud_listening_style"] as? String, !lstyle.isEmpty { self.listeningStyle = lstyle }
         refreshOpenRouterBalance()
     }
 
@@ -140,6 +142,7 @@ final class AppState: ObservableObject {
         payload["hud_color"] = self.hudColor
         payload["hud_always_show"] = self.alwaysShowCompanion
         payload["hud_y_offset"] = self.hudYOffset
+        payload["hud_listening_style"] = self.listeningStyle
 
         if let data = try? JSONSerialization.data(withJSONObject: payload, options: .prettyPrinted) {
             try? data.write(to: configURL)
@@ -1437,46 +1440,126 @@ struct InteractiveCharacterView: View {
     }
 }
 
-// MARK: - Organic Harmonic Soundwave (Pure Fluid Audio Equalizer)
+// MARK: - Centered Organic Harmonic Soundwave (Pure Fluid Audio Equalizer)
 struct OrganicVoiceWaveform: View {
     @ObservedObject var state = AppState.shared
     let time: Double
-    let barCount: Int = 6
+    var isVertical: Bool = false
+    let barCount: Int = 7
 
     var body: some View {
-        HStack(spacing: 1.6) {
-            ForEach(0..<barCount, id: \.self) { i in
-                let h = computeHeight(i: i, time: time)
-                Capsule()
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                state.hudAccentColor,
-                                state.hudAccentColor.opacity(0.65)
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
+        if isVertical {
+            VStack(spacing: 2.2) {
+                ForEach(0..<barCount, id: \.self) { i in
+                    let breadth = computeBreadth(i: i, time: time)
+                    Capsule()
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    state.hudAccentColor,
+                                    state.hudAccentColor.opacity(0.70)
+                                ],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
                         )
-                    )
-                    .frame(width: 1.8, height: h)
+                        .frame(width: breadth, height: 2.0)
+                        .shadow(color: state.hudAccentColor.opacity(0.4), radius: 1.5)
+                }
+            }
+            .frame(width: 16)
+        } else {
+            HStack(spacing: 2.2) {
+                ForEach(0..<barCount, id: \.self) { i in
+                    let height = computeBreadth(i: i, time: time)
+                    Capsule()
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    state.hudAccentColor,
+                                    state.hudAccentColor.opacity(0.70)
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                        .frame(width: 2.2, height: height)
+                        .shadow(color: state.hudAccentColor.opacity(0.4), radius: 1.5)
+                }
+            }
+            .frame(height: 14)
+        }
+    }
+
+    private func computeBreadth(i: Int, time: Double) -> CGFloat {
+        if !state.isRecording { return 2.5 }
+        let freq = 4.2 + Double(i) * 1.5
+        let phase = Double(i) * 0.78
+        let harm1 = sin(time * freq + phase)
+        let harm2 = cos(time * (freq * 0.52) + phase * 1.3)
+        let oscillation = harm1 * 0.65 + harm2 * 0.35
+        let centerDist = abs(Double(i) - 3.0) / 3.0 // 7 bars: center is index 3
+        let bell = 0.35 + 0.65 * cos(centerDist * .pi / 2.0)
+        let energy = max(0.18, Double(state.audioLevel))
+        let dynamicRange = 9.5 * bell * energy
+        let raw = 2.5 + dynamicRange * (1.0 + oscillation * 0.75)
+        return CGFloat(max(2.5, min(14.0, raw)))
+    }
+}
+
+// MARK: - Centered Bouncing Processing Dots
+struct CenteredProcessingDotsView: View {
+    @ObservedObject var state = AppState.shared
+    let time: Double
+
+    var body: some View {
+        HStack(spacing: 3.2) {
+            ForEach(0..<3, id: \.self) { i in
+                let wave = sin(time * 7.5 + Double(i) * 1.2)
+                Circle()
+                    .fill(state.hudAccentColor)
+                    .frame(width: 3.2, height: 3.2)
+                    .scaleEffect(0.6 + max(0.0, wave) * 0.65)
+                    .opacity(0.35 + max(0.0, wave) * 0.65)
             }
         }
         .frame(height: 12)
     }
+}
 
-    private func computeHeight(i: Int, time: Double) -> CGFloat {
-        if !state.isRecording { return 2.0 }
-        let freq = 3.6 + Double(i) * 1.4
-        let phase = Double(i) * 0.72
-        let harm1 = sin(time * freq + phase)
-        let harm2 = cos(time * (freq * 0.55) + phase * 1.2)
-        let oscillation = harm1 * 0.65 + harm2 * 0.35
-        let centerDist = abs(Double(i) - 2.5) / 2.5
-        let bell = 0.40 + 0.60 * cos(centerDist * .pi / 2.0)
-        let energy = max(0.15, Double(state.audioLevel))
-        let dynamicRange = 8.5 * bell * energy
-        let rawHeight = 2.0 + dynamicRange * (1.0 + oscillation * 0.75)
-        return CGFloat(max(2.0, min(12.0, rawHeight)))
+// MARK: - Centered Listening Character with Dynamic Sonic Pulse Aura
+struct ListeningCharacterView: View {
+    @ObservedObject var state = AppState.shared
+    let time: Double
+
+    var body: some View {
+        ZStack {
+            if state.isRecording {
+                let energy = max(0.12, CGFloat(state.audioLevel))
+                Circle()
+                    .strokeBorder(
+                        state.hudAccentColor.opacity(Double(0.25 + energy * 0.5)),
+                        lineWidth: 1.0
+                    )
+                    .frame(width: 22, height: 22)
+                    .scaleEffect(1.05 + energy * 0.45 + CGFloat(sin(time * 7.0)) * 0.06)
+
+                Circle()
+                    .strokeBorder(
+                        state.hudAccentColor.opacity(Double(0.12 + energy * 0.3)),
+                        lineWidth: 0.8
+                    )
+                    .frame(width: 22, height: 22)
+                    .scaleEffect(1.3 + energy * 0.35 + CGFloat(cos(time * 5.0)) * 0.08)
+            } else if state.isProcessing {
+                Circle()
+                    .strokeBorder(state.hudAccentColor.opacity(0.35), lineWidth: 1.0)
+                    .frame(width: 22, height: 22)
+                    .scaleEffect(1.1 + CGFloat(sin(time * 6.0)) * 0.1)
+            }
+
+            InteractiveCharacterView(state: state, time: time)
+        }
     }
 }
 
@@ -1530,14 +1613,17 @@ struct FloatingHUDView: View {
 
             if isVertical {
                 // VERTICAL CAPSULE FOR LEFT / RIGHT SCREEN EDGES
-                let pillWidth: CGFloat = isMini ? 22 : (isSpacious ? 28 : 25)
+                let pillWidth: CGFloat = isMini ? 24 : (isSpacious ? 30 : 26)
                 let pillHeight: CGFloat = {
+                    if state.listeningStyle == "character" {
+                        return isMini ? 36 : (isSpacious ? 46 : 42)
+                    }
                     if state.isRecording {
-                        return isMini ? 68 : (isSpacious ? 84 : 76)
+                        return isMini ? 58 : (isSpacious ? 74 : 66)
                     } else if state.isProcessing {
-                        return isMini ? 50 : (isSpacious ? 62 : 56)
+                        return isMini ? 42 : (isSpacious ? 54 : 48)
                     } else {
-                        return isMini ? 36 : (isSpacious ? 44 : 40)
+                        return isMini ? 36 : (isSpacious ? 46 : 42)
                     }
                 }()
 
@@ -1565,22 +1651,42 @@ struct FloatingHUDView: View {
                             y: state.isHUDDragging ? 4 : 2
                         )
 
-                    VStack(spacing: 5) {
-                        InteractiveCharacterView(state: state, time: time)
-
-                        if state.isRecording {
-                            OrganicVoiceWaveform(state: state, time: time)
-                                .transition(.scale.combined(with: .opacity))
-                        } else if state.isProcessing {
-                            Circle()
-                                .trim(from: 0.0, to: 0.65)
-                                .stroke(state.hudAccentColor, lineWidth: 1.5)
-                                .frame(width: 8, height: 8)
-                                .rotationEffect(.degrees(time * 360.0))
-                                .transition(.scale.combined(with: .opacity))
+                    // Unified Centered Morphing Content
+                    ZStack {
+                        if state.listeningStyle == "waveform" {
+                            if state.isProcessing {
+                                CenteredProcessingDotsView(state: state, time: time)
+                                    .transition(.scale(scale: 0.65).combined(with: .opacity))
+                            } else {
+                                OrganicVoiceWaveform(state: state, time: time, isVertical: true)
+                                    .transition(.scale(scale: 0.65).combined(with: .opacity))
+                            }
+                        } else if state.listeningStyle == "character" {
+                            ListeningCharacterView(state: state, time: time)
+                        } else {
+                            // Morph Mode (Default): Character morphs into centered waveform!
+                            if state.isRecording {
+                                OrganicVoiceWaveform(state: state, time: time, isVertical: true)
+                                    .transition(.asymmetric(
+                                        insertion: .scale(scale: 0.65).combined(with: .opacity),
+                                        removal: .scale(scale: 0.65).combined(with: .opacity)
+                                    ))
+                            } else if state.isProcessing {
+                                CenteredProcessingDotsView(state: state, time: time)
+                                    .transition(.asymmetric(
+                                        insertion: .scale(scale: 0.65).combined(with: .opacity),
+                                        removal: .scale(scale: 0.65).combined(with: .opacity)
+                                    ))
+                            } else {
+                                InteractiveCharacterView(state: state, time: time)
+                                    .transition(.asymmetric(
+                                        insertion: .scale(scale: 0.75).combined(with: .opacity),
+                                        removal: .scale(scale: 0.75).combined(with: .opacity)
+                                    ))
+                            }
                         }
                     }
-                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                 }
                 .frame(width: pillWidth, height: pillHeight)
                 .scaleEffect(state.isPetHappy ? 1.06 : (state.isHUDHovered ? 1.03 : 1.0))
@@ -1593,15 +1699,18 @@ struct FloatingHUDView: View {
             } else {
                 // HORIZONTAL CAPSULE FOR BOTTOM CENTER
                 let pillWidth: CGFloat = {
+                    if state.listeningStyle == "character" {
+                        return isMini ? 36 : (isSpacious ? 46 : 42)
+                    }
                     if state.isRecording {
-                        return isMini ? 68 : (isSpacious ? 84 : 76)
+                        return isMini ? 58 : (isSpacious ? 74 : 66)
                     } else if state.isProcessing {
-                        return isMini ? 50 : (isSpacious ? 62 : 56)
+                        return isMini ? 42 : (isSpacious ? 54 : 48)
                     } else {
-                        return isMini ? 36 : (isSpacious ? 44 : 40)
+                        return isMini ? 36 : (isSpacious ? 46 : 42)
                     }
                 }()
-                let pillHeight: CGFloat = isMini ? 22 : (isSpacious ? 28 : 25)
+                let pillHeight: CGFloat = isMini ? 24 : (isSpacious ? 30 : 26)
 
                 VStack(spacing: 0) {
                     ZStack {
@@ -1641,37 +1750,42 @@ struct FloatingHUDView: View {
                                 y: state.isHUDDragging ? 4 : 2
                             )
 
-                        HStack(spacing: 5) {
-                            InteractiveCharacterView(state: state, time: time)
-
-                            if state.isRecording {
-                                OrganicVoiceWaveform(state: state, time: time)
-                                    .transition(.asymmetric(
-                                        insertion: .opacity.combined(with: .scale(scale: 0.6, anchor: .leading)),
-                                        removal: .opacity.combined(with: .scale(scale: 0.6, anchor: .leading))
-                                    ))
-                            } else if state.isProcessing {
-                                ZStack {
-                                    Circle()
-                                        .stroke(state.hudAccentColor.opacity(0.3), lineWidth: 1.2)
-                                        .frame(width: 10, height: 10)
-                                    Circle()
-                                        .trim(from: 0.0, to: 0.65)
-                                        .stroke(
-                                            LinearGradient(
-                                                colors: [state.hudAccentColor, state.hudAccentColor.opacity(0.1)],
-                                                startPoint: .top,
-                                                endPoint: .bottom
-                                            ),
-                                            style: StrokeStyle(lineWidth: 1.5, lineCap: .round)
-                                        )
-                                        .frame(width: 10, height: 10)
-                                        .rotationEffect(.degrees(time * 360.0))
+                        // Unified Centered Morphing Content
+                        ZStack {
+                            if state.listeningStyle == "waveform" {
+                                if state.isProcessing {
+                                    CenteredProcessingDotsView(state: state, time: time)
+                                        .transition(.scale(scale: 0.65).combined(with: .opacity))
+                                } else {
+                                    OrganicVoiceWaveform(state: state, time: time, isVertical: false)
+                                        .transition(.scale(scale: 0.65).combined(with: .opacity))
                                 }
-                                .transition(.scale.combined(with: .opacity))
+                            } else if state.listeningStyle == "character" {
+                                ListeningCharacterView(state: state, time: time)
+                            } else {
+                                // Morph Mode (Default): Character morphs into centered waveform!
+                                if state.isRecording {
+                                    OrganicVoiceWaveform(state: state, time: time, isVertical: false)
+                                        .transition(.asymmetric(
+                                            insertion: .scale(scale: 0.65).combined(with: .opacity),
+                                            removal: .scale(scale: 0.65).combined(with: .opacity)
+                                        ))
+                                } else if state.isProcessing {
+                                    CenteredProcessingDotsView(state: state, time: time)
+                                        .transition(.asymmetric(
+                                            insertion: .scale(scale: 0.65).combined(with: .opacity),
+                                            removal: .scale(scale: 0.65).combined(with: .opacity)
+                                        ))
+                                } else {
+                                    InteractiveCharacterView(state: state, time: time)
+                                        .transition(.asymmetric(
+                                            insertion: .scale(scale: 0.75).combined(with: .opacity),
+                                            removal: .scale(scale: 0.75).combined(with: .opacity)
+                                        ))
+                                }
                             }
                         }
-                        .padding(.horizontal, 6)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                     }
                     .frame(width: pillWidth, height: pillHeight)
                     .offset(y: state.isPetHappy ? -3.5 : 0)
@@ -2392,6 +2506,25 @@ struct MenuBarControlCenterView: View {
                 }
             }
 
+            // Listening Animation Style Picker
+            VStack(alignment: .leading, spacing: 3) {
+                HStack {
+                    Text("Listening Visual:")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text(state.listeningStyle == "morph" ? "Morph to Bar" : (state.listeningStyle == "character" ? "Character Aura" : "Waveform Only"))
+                        .font(.system(size: 8.5, weight: .semibold))
+                        .foregroundColor(.primary.opacity(0.85))
+                }
+
+                HStack(spacing: 4) {
+                    ListeningStyleChip(id: "morph", icon: "sparkles", label: "Morph")
+                    ListeningStyleChip(id: "character", icon: "waveform.circle", label: "Aura")
+                    ListeningStyleChip(id: "waveform", icon: "waveform", label: "Wave")
+                }
+            }
+
             // Always on Desktop Toggle
             HStack {
                 HStack(spacing: 5) {
@@ -2653,6 +2786,45 @@ struct MascotChip: View {
                     .font(.system(size: 10))
                 Text(label)
                     .font(.system(size: 9, weight: isSelected ? .semibold : .regular))
+            }
+            .lineLimit(1)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 3.5)
+            .frame(maxWidth: .infinity)
+            .background(isSelected ? Color.primary.opacity(0.14) : Color.primary.opacity(0.04))
+            .foregroundColor(isSelected ? .primary : .secondary)
+            .cornerRadius(4)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct ListeningStyleChip: View {
+    let id: String
+    let icon: String
+    let label: String
+    @ObservedObject var state = AppState.shared
+
+    var isSelected: Bool {
+        state.listeningStyle.lowercased() == id.lowercased()
+    }
+
+    var body: some View {
+        Button(action: {
+            state.listeningStyle = id
+            state.saveConfigToDisk()
+            FloatingHUDController.shared.show()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                if !AppState.shared.isRecording && !AppState.shared.isProcessing && !AppState.shared.alwaysShowCompanion {
+                    FloatingHUDController.shared.hide()
+                }
+            }
+        }) {
+            HStack(spacing: 3) {
+                Image(systemName: icon)
+                    .font(.system(size: 8))
+                Text(label)
+                    .font(.system(size: 8.5, weight: isSelected ? .semibold : .regular))
             }
             .lineLimit(1)
             .padding(.horizontal, 5)

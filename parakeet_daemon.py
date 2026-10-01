@@ -53,6 +53,7 @@ DEFAULT_CONFIG = {
     "hud_size": "compact",     # "mini", "compact", "spacious"
     "hud_character": "gearbot", # "gearbot", "birb", "neko", "orb_gears", "custom"
     "hud_color": "amber",      # "amber", "rose", "emerald", "cyan", "purple", "monochrome"
+    "hud_listening_style": "morph", # "morph", "character", "waveform"
 }
 
 
