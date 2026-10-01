@@ -68,7 +68,7 @@ final class AppState: ObservableObject {
         isFlowActive = true
 
         flowTimer?.invalidate()
-        flowTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+        let t = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             if self.isFlowActive && !self.isFlowPaused {
                 if self.flowRemainingSeconds > 0 {
@@ -78,6 +78,8 @@ final class AppState: ObservableObject {
                 }
             }
         }
+        RunLoop.main.add(t, forMode: .common)
+        flowTimer = t
 
         FloatingHUDController.shared.show()
     }
@@ -144,12 +146,15 @@ final class AppState: ObservableObject {
     @Published var petClickCount: Int = 0
     @Published var petReactionEmoji: String = "💖"
 
-    // Live Cursor & Keyboard Interactivity (Fluid Look-At & Typing Side-Eye)
+    // Live Cursor & Keyboard Interactivity (Fluid Look-At & Dynamic Typing Emotions)
     @Published var cursorLookX: Double = 0.0 // -1.0 (left) ... +1.0 (right)
     @Published var cursorLookY: Double = 0.0 // -1.0 (down) ... +1.0 (up)
     @Published var isCursorNear: Bool = false
-    @Published var isUserTyping: Bool = false
+    @Published var lastTypingTime: Double = 0.0
+    @Published var typingStartTime: Double = 0.0
+    @Published var typingKeystrokeCount: Int = 0
     @Published var typingSpeedBurst: Bool = false
+    @Published var isUserTyping: Bool = false
 
     var hudWidth: CGFloat {
         switch hudSize {
@@ -976,19 +981,35 @@ struct GearBotCharacterView: View {
     var isCursorNear: Bool = false
     var isTyping: Bool = false
     var typingBurst: Bool = false
+    var typingPhase: Int = 0
+    var isFlowActive: Bool = false
+    var isLookingAtTimer: Bool = false
+    var isTimerLow: Bool = false
+    var isTimerUrgent: Bool = false
+    var timerLookX: Double = 0.0
+    var timerLookY: Double = 0.0
 
     var body: some View {
         let isIdle = !isRecording && !isProcessing && !isDone
         let cycle = isIdle ? time.truncatingRemainder(dividingBy: 18.0) : 0.0
 
-        // Head tilt: reacts to typing (side-eye), cursor proximity, or idle
+        // Head tilt: reacts dynamically to typing phase, timer look-at, cursor, or idle
         let headTilt: Double = {
             if isHappy {
                 return sin(time * 18.0) * 5.5
+            } else if isLookingAtTimer {
+                return timerLookX * 6.5 // Leans head toward the timer countdown!
             } else if isTyping {
-                return -7.5 // Curious skeptical side-eye tilt when user is typing!
+                switch typingPhase {
+                case 1: return sin(time * 8.0) * 3.5 // Rhythm bop sway
+                case 2: return 0.0 // Focused lock-in
+                case 3: return 5.5 // Approving smirk tilt
+                default: return -7.5 // Iconic skeptical side-eye tilt
+                }
+            } else if isTimerLow {
+                return sin(time * 24.0) * (isTimerUrgent ? 1.4 : 0.8) // Nervous timer jitter
             } else if isCursorNear {
-                return cursorLookX * 6.5 // Head tracks cursor horizontally!
+                return cursorLookX * 6.5
             } else if isProcessing {
                 return sin(time * 3.5) * 5.0
             } else if isRecording {
@@ -1010,10 +1031,25 @@ struct GearBotCharacterView: View {
         let headBob: CGFloat = {
             if isHappy {
                 return -3.5 + CGFloat(abs(sin(time * 14.0))) * -2.0
+            } else if isLookingAtTimer {
+                return CGFloat(-timerLookY * 1.5)
             } else if isTyping {
-                return -1.5 + (typingBurst ? CGFloat(abs(sin(time * 20.0))) * -1.0 : 0)
+                switch typingPhase {
+                case 1:
+                    return -2.0 + CGFloat(abs(sin(time * (typingBurst ? 18.0 : 12.0)))) * -2.2 // Keystroke beat bounce!
+                case 2:
+                    return -2.2 // Perked upright in awe
+                case 3:
+                    return CGFloat(sin(time * 3.0) * 0.8)
+                default:
+                    return -1.5 + (typingBurst ? CGFloat(abs(sin(time * 20.0))) * -1.0 : 0)
+                }
+            } else if isTimerUrgent {
+                return -2.0 + CGFloat(abs(sin(time * 18.0))) * -1.8 // Excited sprint bounce!
+            } else if isTimerLow {
+                return CGFloat(sin(time * 24.0) * 0.6) // Nervous pacing
             } else if isCursorNear {
-                return CGFloat(-cursorLookY * 1.5) // Perks up when cursor is high!
+                return CGFloat(-cursorLookY * 1.5)
             } else if isRecording {
                 return -CGFloat(audioLevel) * 2.5
             } else if isHovered {
@@ -1027,11 +1063,18 @@ struct GearBotCharacterView: View {
         let (eyeOffsetX, eyeOffsetY): (CGFloat, CGFloat) = {
             if isHappy {
                 return (0.0, 0.0)
+            } else if isLookingAtTimer {
+                return (CGFloat(timerLookX * 1.7), CGFloat(-timerLookY * 1.0))
             } else if isTyping {
-                // HARD SIDE-EYE: glances up-left toward keyboard/screen!
-                return (-1.8, 0.8)
+                switch typingPhase {
+                case 1: return (0.0, 1.2) // Looking down/forward at keyboard
+                case 2: return (0.0, 0.2) // Wide locked-in focus
+                case 3: return (1.2, 0.4) // Cheerful glance
+                default: return (-1.8, 0.8) // Hard side-eye up-left
+                }
+            } else if isTimerUrgent {
+                return (CGFloat(sin(time * 8.0) * 1.4), 0.0) // Nervous darting glance
             } else if isCursorNear {
-                // Fluid cursor tracking!
                 return (CGFloat(cursorLookX * 1.6), CGFloat(-cursorLookY * 1.0))
             } else if isHovered {
                 return (0.0, -0.6)
@@ -1046,14 +1089,40 @@ struct GearBotCharacterView: View {
         }()
 
         // Antenna bulb illumination & frequency:
-        let antennaBulbLit = isRecording || isProcessing || isHovered || isHappy || isTyping || isCursorNear
-        let antennaSpeed = isTyping ? 32.0 : 20.0
+        let antennaBulbLit = isRecording || isProcessing || isHovered || isHappy || isTyping || isCursorNear || isTimerLow
+        let antennaSpeed = isTimerUrgent ? 36.0 : (isTyping ? 30.0 : 20.0)
 
         // Blinking:
         let blinkPhase = sin(time * 1.7)
-        let isBlinking = (blinkPhase > 0.96) && !isProcessing && !isDone && !isHappy && !isTyping
-        let leftEyeScaleY: CGFloat = isBlinking ? 0.15 : (isTyping ? 1.15 : 1.0)
-        let rightEyeScaleY: CGFloat = isBlinking ? 0.15 : (isTyping ? 0.35 : 1.0) // Skeptical narrow right eye during side-eye!
+        let isBlinking = (blinkPhase > 0.96) && !isProcessing && !isDone && !isHappy && !isTyping && !isTimerUrgent
+
+        let leftEyeScaleY: CGFloat = {
+            if isBlinking { return 0.15 }
+            if isTyping {
+                switch typingPhase {
+                case 1: return 1.0
+                case 2: return 1.35 // Wide camera lens in awe!
+                case 3: return 0.70 // Happy squint
+                default: return 1.15
+                }
+            }
+            if isTimerUrgent { return 1.25 }
+            return 1.0
+        }()
+
+        let rightEyeScaleY: CGFloat = {
+            if isBlinking { return 0.15 }
+            if isTyping {
+                switch typingPhase {
+                case 1: return 1.0
+                case 2: return 1.35 // Wide camera lens in awe!
+                case 3: return 0.70 // Happy squint
+                default: return 0.35 // Skeptical narrowed eye during side-eye!
+                }
+            }
+            if isTimerUrgent { return 1.25 }
+            return 1.0
+        }()
 
         VStack(spacing: 0) {
             if isProcessing {
@@ -1063,14 +1132,14 @@ struct GearBotCharacterView: View {
             } else {
                 VStack(spacing: 0) {
                     Circle()
-                        .fill(antennaBulbLit ? accentColor : Color.white.opacity(0.8))
+                        .fill(isTimerUrgent ? Color.red : (antennaBulbLit ? accentColor : Color.white.opacity(0.8)))
                         .frame(width: 3.5, height: 3.5)
-                        .scaleEffect(isHappy || isTyping ? (1.25 + sin(time * antennaSpeed) * 0.2) : (antennaBulbLit ? 1.2 : 1.0))
-                        .shadow(color: accentColor.opacity(antennaBulbLit ? 0.9 : 0.2), radius: antennaBulbLit ? 3.0 : 1)
+                        .scaleEffect(isHappy || isTyping || isTimerUrgent ? (1.25 + sin(time * antennaSpeed) * 0.25) : (antennaBulbLit ? 1.2 : 1.0))
+                        .shadow(color: (isTimerUrgent ? Color.red : accentColor).opacity(antennaBulbLit ? 0.9 : 0.2), radius: antennaBulbLit ? 3.0 : 1)
                     Rectangle()
                         .fill(Color.white.opacity(0.4))
                         .frame(width: 1.5, height: 3.5)
-                        .rotationEffect(.degrees(isCursorNear ? cursorLookX * 12.0 : 0))
+                        .rotationEffect(.degrees(isLookingAtTimer ? timerLookX * 12.0 : (isCursorNear ? cursorLookX * 12.0 : 0)))
                 }
                 .offset(y: 1)
             }
@@ -1167,16 +1236,28 @@ struct GearBotCharacterView: View {
                         }
                     }
                 }
+
+                // Nervous sweat or urgent sprint indicator
+                if isTimerUrgent {
+                    Text("⚡")
+                        .font(.system(size: 6))
+                        .offset(x: 9, y: -7 + sin(time * 8.0) * 1.2)
+                } else if isTimerLow {
+                    Text("💧")
+                        .font(.system(size: 5.5))
+                        .offset(x: 8, y: -6 + sin(time * 6.0) * 1.0)
+                }
             }
         }
         .rotationEffect(.degrees(headTilt))
         .offset(y: headBob)
         .animation(.spring(response: 0.28, dampingFraction: 0.72), value: isTyping)
         .animation(.spring(response: 0.26, dampingFraction: 0.75), value: isCursorNear)
+        .animation(.spring(response: 0.26, dampingFraction: 0.75), value: isLookingAtTimer)
     }
 }
 
-// MARK: - 2. Neko Character (Sassy Feline Companion)
+// MARK: - 2. Neko Character (Cozy & Expressive Cat Companion)
 struct NekoCharacterView: View {
     let time: Double
     let isRecording: Bool
@@ -1191,17 +1272,33 @@ struct NekoCharacterView: View {
     var isCursorNear: Bool = false
     var isTyping: Bool = false
     var typingBurst: Bool = false
+    var typingPhase: Int = 0
+    var isFlowActive: Bool = false
+    var isLookingAtTimer: Bool = false
+    var isTimerLow: Bool = false
+    var isTimerUrgent: Bool = false
+    var timerLookX: Double = 0.0
+    var timerLookY: Double = 0.0
 
     var body: some View {
         let blinkPhase = sin(time * 1.6)
-        let isBlinking = blinkPhase > 0.96 && !isProcessing && !isDone && !isHappy && !isTyping
+        let isBlinking = blinkPhase > 0.96 && !isProcessing && !isDone && !isHappy && !isTyping && !isTimerUrgent
 
         // Ear twitches:
         let leftEarTwitch: Double = {
             if isHappy {
                 return sin(time * 16.0) * 10.0
+            } else if isLookingAtTimer {
+                return timerLookX * 4.0
             } else if isTyping {
-                return -12.0 // Sassy folded back airplane ear!
+                switch typingPhase {
+                case 1: return sin(time * 14.0) * 8.0 // Ears bobbing to typing beat!
+                case 2: return 2.0 // Upright alert
+                case 3: return -4.0 // Purring relaxed
+                default: return -14.0 // Airplane ear!
+                }
+            } else if isTimerUrgent {
+                return sin(time * 26.0) * 10.0 // Nervous ear twitch
             } else if isCursorNear {
                 return cursorLookX * 8.0 - 2.0
             } else if isRecording {
@@ -1213,8 +1310,17 @@ struct NekoCharacterView: View {
         let rightEarTwitch: Double = {
             if isHappy {
                 return -sin(time * 16.0) * 10.0
+            } else if isLookingAtTimer {
+                return timerLookX * 12.0 // Right ear pointed toward timer!
             } else if isTyping {
-                return 15.0 // Tilted alert ear!
+                switch typingPhase {
+                case 1: return -sin(time * 14.0) * 8.0
+                case 2: return 2.0
+                case 3: return 4.0
+                default: return 15.0 // Tilted alert ear!
+                }
+            } else if isTimerUrgent {
+                return -sin(time * 26.0) * 10.0
             } else if isCursorNear {
                 return cursorLookX * 8.0 + 2.0
             } else if isRecording {
@@ -1226,21 +1332,59 @@ struct NekoCharacterView: View {
         let headTilt: Double = {
             if isHappy {
                 return sin(time * 16.0) * 6.0
+            } else if isLookingAtTimer {
+                return timerLookX * 7.0 // Head turns toward timer!
             } else if isTyping {
-                return -6.5 // Judging your typing side-eye head cock!
+                switch typingPhase {
+                case 1: return sin(time * 10.0) * 4.0 // Kitty head nodding to typing beat
+                case 2: return 0.0 // Pounce focus
+                case 3: return 5.0 // Soft purr tilt
+                default: return -6.5 // Judging side-eye head cock
+                }
+            } else if isTimerLow {
+                return sin(time * 24.0) * (isTimerUrgent ? 1.5 : 0.8) // Nervous timer jitter
             } else if isCursorNear {
                 return cursorLookX * 6.0
             }
             return 0.0
         }()
 
-        let bob: CGFloat = isHappy ? (-2.5 + CGFloat(abs(sin(time * 14.0))) * -1.5) : (isTyping ? -1.0 : (isHovered ? -1.0 : 0.0))
+        let bob: CGFloat = {
+            if isHappy {
+                return -2.5 + CGFloat(abs(sin(time * 14.0))) * -1.5
+            } else if isLookingAtTimer {
+                return CGFloat(-timerLookY * 1.5)
+            } else if isTyping {
+                switch typingPhase {
+                case 1: return -2.0 + CGFloat(abs(sin(time * (typingBurst ? 18.0 : 12.0)))) * -2.0 // Vibing bop
+                case 2: return -2.0 // Alert
+                case 3: return 0.0
+                default: return -1.0
+                }
+            } else if isTimerUrgent {
+                return -2.0 + CGFloat(abs(sin(time * 18.0))) * -1.6 // Excited bounce!
+            } else if isTimerLow {
+                return CGFloat(sin(time * 24.0) * 0.5)
+            } else if isHovered {
+                return -1.0
+            }
+            return 0.0
+        }()
 
         let (eyeOffsetX, eyeOffsetY): (CGFloat, CGFloat) = {
             if isHappy {
                 return (0.0, 0.0)
+            } else if isLookingAtTimer {
+                return (CGFloat(timerLookX * 1.8), CGFloat(-timerLookY * 1.1))
             } else if isTyping {
-                return (-1.8, 0.7) // Side-eye towards screen/keyboard!
+                switch typingPhase {
+                case 1: return (0.0, 0.9) // Looking at keyboard
+                case 2: return (0.0, 0.0) // Big round eyes centered
+                case 3: return (0.8, 0.4) // Sweet look
+                default: return (-1.8, 0.7) // Side-eye
+                }
+            } else if isTimerUrgent {
+                return (CGFloat(sin(time * 8.0) * 1.5), 0.0)
             } else if isCursorNear {
                 return (CGFloat(cursorLookX * 1.8), CGFloat(-cursorLookY * 1.1))
             }
@@ -1315,12 +1459,12 @@ struct NekoCharacterView: View {
                             ZStack {
                                 Capsule()
                                     .fill(accentColor)
-                                    .frame(width: isCursorNear ? 3.6 : 3.2, height: isTyping ? 3.0 : (isCursorNear ? 5.6 : 5.0))
-                                    .scaleEffect(y: isBlinking ? 0.15 : (isTyping ? 0.45 : 1.0))
+                                    .frame(width: isCursorNear || (isTyping && typingPhase == 2) ? 3.6 : 3.2, height: isTyping && typingPhase == 0 ? 3.0 : 5.0)
+                                    .scaleEffect(y: isBlinking ? 0.15 : (isTyping && typingPhase == 0 ? 0.45 : 1.0))
                                     .offset(x: eyeOffsetX, y: eyeOffsetY)
                                     .shadow(color: accentColor.opacity(0.6), radius: 2)
 
-                                if isCursorNear && !isBlinking && !isTyping {
+                                if (isCursorNear || (isTyping && typingPhase == 2)) && !isBlinking {
                                     Circle()
                                         .fill(Color.white.opacity(0.9))
                                         .frame(width: 1.0, height: 1.0)
@@ -1332,12 +1476,12 @@ struct NekoCharacterView: View {
                             ZStack {
                                 Capsule()
                                     .fill(accentColor)
-                                    .frame(width: isCursorNear ? 3.6 : 3.2, height: isTyping ? 3.0 : (isCursorNear ? 5.6 : 5.0))
-                                    .scaleEffect(y: isBlinking ? 0.15 : (isTyping ? 0.45 : 1.0))
+                                    .frame(width: isCursorNear || (isTyping && typingPhase == 2) ? 3.6 : 3.2, height: isTyping && typingPhase == 0 ? 3.0 : 5.0)
+                                    .scaleEffect(y: isBlinking ? 0.15 : (isTyping && typingPhase == 0 ? 0.45 : 1.0))
                                     .offset(x: eyeOffsetX, y: eyeOffsetY)
                                     .shadow(color: accentColor.opacity(0.6), radius: 2)
 
-                                if isCursorNear && !isBlinking && !isTyping {
+                                if (isCursorNear || (isTyping && typingPhase == 2)) && !isBlinking {
                                     Circle()
                                         .fill(Color.white.opacity(0.9))
                                         .frame(width: 1.0, height: 1.0)
@@ -1347,13 +1491,40 @@ struct NekoCharacterView: View {
                         }
 
                         if isTyping {
-                            // Sly kitty smirk: :3
-                            Text("w")
+                            switch typingPhase {
+                            case 2:
+                                Text("o")
+                                    .font(.system(size: 4.5, weight: .bold))
+                                    .foregroundColor(accentColor.opacity(0.85))
+                                    .offset(y: -1)
+                            case 3:
+                                Text("^")
+                                    .font(.system(size: 5.0, weight: .bold))
+                                    .foregroundColor(accentColor.opacity(0.85))
+                                    .offset(y: -1)
+                            default:
+                                Text("w") // Sly kitty smirk: :3
+                                    .font(.system(size: 4.5, weight: .bold))
+                                    .foregroundColor(accentColor.opacity(0.85))
+                                    .offset(y: -1)
+                            }
+                        } else if isTimerUrgent {
+                            Text("o")
                                 .font(.system(size: 4.5, weight: .bold))
                                 .foregroundColor(accentColor.opacity(0.85))
                                 .offset(y: -1)
                         }
                     }
+                }
+
+                if isTimerUrgent {
+                    Text("⚡")
+                        .font(.system(size: 6))
+                        .offset(x: 8, y: -7 + sin(time * 8.0) * 1.2)
+                } else if isTimerLow {
+                    Text("💧")
+                        .font(.system(size: 5.5))
+                        .offset(x: 7, y: -6 + sin(time * 6.0) * 1.0)
                 }
             }
         }
@@ -1361,6 +1532,7 @@ struct NekoCharacterView: View {
         .offset(y: bob)
         .animation(.spring(response: 0.28, dampingFraction: 0.72), value: isTyping)
         .animation(.spring(response: 0.26, dampingFraction: 0.75), value: isCursorNear)
+        .animation(.spring(response: 0.26, dampingFraction: 0.75), value: isLookingAtTimer)
     }
 }
 
@@ -1379,18 +1551,51 @@ struct LunaCharacterView: View {
     var isCursorNear: Bool = false
     var isTyping: Bool = false
     var typingBurst: Bool = false
+    var typingPhase: Int = 0
+    var isFlowActive: Bool = false
+    var isLookingAtTimer: Bool = false
+    var isTimerLow: Bool = false
+    var isTimerUrgent: Bool = false
+    var timerLookX: Double = 0.0
+    var timerLookY: Double = 0.0
 
     var body: some View {
         let blinkPhase = sin(time * 1.5)
-        let isBlinking = blinkPhase > 0.96 && !isProcessing && !isDone && !isHappy && !isTyping
+        let isBlinking = blinkPhase > 0.96 && !isProcessing && !isDone && !isHappy && !isTyping && !isTimerUrgent
 
-        // Gentle floating ethereal sway
-        let floatBob = sin(time * (isTyping ? 6.0 : 2.4)) * 1.6
+        let floatBob: Double = {
+            if isHappy {
+                return -3.0 + abs(sin(time * 14.0)) * -2.0
+            } else if isLookingAtTimer {
+                return -timerLookY * 1.5
+            } else if isTimerUrgent {
+                return -2.0 + sin(time * 14.0) * 2.2
+            } else if isTyping {
+                switch typingPhase {
+                case 1: return sin(time * 12.0) * 2.2 // Figure-8 float sway
+                case 2: return -1.5
+                default: return sin(time * 4.0) * 1.6
+                }
+            } else if isTimerLow {
+                return sin(time * 10.0) * 1.8
+            }
+            return sin(time * 2.4) * 1.6
+        }()
+
         let bodyTilt: Double = {
             if isHappy {
                 return sin(time * 16.0) * 8.0
+            } else if isLookingAtTimer {
+                return timerLookX * 7.5
             } else if isTyping {
-                return -7.0 // Shy curious tilt
+                switch typingPhase {
+                case 1: return sin(time * 8.0) * 5.0
+                case 2: return 0.0
+                case 3: return 6.0
+                default: return -7.0
+                }
+            } else if isTimerLow {
+                return sin(time * 24.0) * (isTimerUrgent ? 1.6 : 0.8)
             } else if isCursorNear {
                 return cursorLookX * 7.0
             }
@@ -1400,13 +1605,24 @@ struct LunaCharacterView: View {
         let (eyeOffsetX, eyeOffsetY): (CGFloat, CGFloat) = {
             if isHappy {
                 return (0.0, 0.0)
+            } else if isLookingAtTimer {
+                return (CGFloat(timerLookX * 1.8), CGFloat(-timerLookY * 1.1))
             } else if isTyping {
-                return (-1.7, 0.8) // Amazed side-eye at fast typing!
+                switch typingPhase {
+                case 1: return (0.0, 0.9)
+                case 2: return (0.0, 0.0)
+                case 3: return (0.8, 0.4)
+                default: return (-1.7, 0.8)
+                }
+            } else if isTimerUrgent {
+                return (CGFloat(sin(time * 8.0) * 1.4), 0.0)
             } else if isCursorNear {
                 return (CGFloat(cursorLookX * 1.8), CGFloat(-cursorLookY * 1.1))
             }
             return (0.0, 0.0)
         }()
+
+        let wispSpeed = isTimerUrgent ? 14.0 : (isTyping ? 9.0 : 3.5)
 
         VStack(spacing: -1) {
             // Little floating star crown / celestial wisp on top
@@ -1414,7 +1630,7 @@ struct LunaCharacterView: View {
                 .fill(accentColor.opacity(0.95))
                 .frame(width: 3.2, height: 3.2)
                 .shadow(color: accentColor.opacity(0.8), radius: 2)
-                .offset(y: sin(time * 3.5) * 1.2)
+                .offset(y: sin(time * wispSpeed) * 1.5)
 
             ZStack {
                 // Ethereal Ghost/Wisp Body with soft gradient
@@ -1458,8 +1674,8 @@ struct LunaCharacterView: View {
                             ZStack {
                                 Capsule()
                                     .fill(Color.black.opacity(0.88))
-                                    .frame(width: 3.6, height: 5.2)
-                                    .scaleEffect(y: isBlinking ? 0.15 : (isTyping ? 0.8 : 1.0))
+                                    .frame(width: (isTyping && typingPhase == 2) ? 4.2 : 3.6, height: 5.2)
+                                    .scaleEffect(y: isBlinking ? 0.15 : (isTyping && typingPhase == 0 ? 0.45 : 1.0))
                                     .offset(x: eyeOffsetX, y: eyeOffsetY)
 
                                 if !isBlinking {
@@ -1473,8 +1689,8 @@ struct LunaCharacterView: View {
                             ZStack {
                                 Capsule()
                                     .fill(Color.black.opacity(0.88))
-                                    .frame(width: 3.6, height: 5.2)
-                                    .scaleEffect(y: isBlinking ? 0.15 : (isTyping ? 0.8 : 1.0))
+                                    .frame(width: (isTyping && typingPhase == 2) ? 4.2 : 3.6, height: 5.2)
+                                    .scaleEffect(y: isBlinking ? 0.15 : (isTyping && typingPhase == 0 ? 0.45 : 1.0))
                                     .offset(x: eyeOffsetX, y: eyeOffsetY)
 
                                 if !isBlinking {
@@ -1486,16 +1702,32 @@ struct LunaCharacterView: View {
                             }
                         }
 
-                        // Soft blushing cheeks
-                        HStack(spacing: 6) {
+                        // Soft blushing cheeks & mouth
+                        HStack(spacing: 5) {
                             Circle()
-                                .fill(Color.pink.opacity(isTyping || isCursorNear ? 0.88 : 0.45))
+                                .fill(Color.pink.opacity(isTyping || isCursorNear || isTimerLow ? 0.90 : 0.45))
                                 .frame(width: 2.2, height: 1.4)
+                            if isTyping && typingPhase == 2 {
+                                Text("o").font(.system(size: 3.5, weight: .bold)).foregroundColor(.white)
+                            } else if isTyping && typingPhase == 3 {
+                                Text("‿").font(.system(size: 4.5, weight: .bold)).foregroundColor(.white)
+                            }
                             Circle()
-                                .fill(Color.pink.opacity(isTyping || isCursorNear ? 0.88 : 0.45))
+                                .fill(Color.pink.opacity(isTyping || isCursorNear || isTimerLow ? 0.90 : 0.45))
                                 .frame(width: 2.2, height: 1.4)
                         }
+                        .offset(y: -0.5)
                     }
+                }
+
+                if isTimerUrgent {
+                    Text("⚡")
+                        .font(.system(size: 6))
+                        .offset(x: 8, y: -7 + sin(time * 8.0) * 1.2)
+                } else if isTimerLow {
+                    Text("💧")
+                        .font(.system(size: 5.5))
+                        .offset(x: 7, y: -6 + sin(time * 6.0) * 1.0)
                 }
             }
         }
@@ -1503,6 +1735,7 @@ struct LunaCharacterView: View {
         .offset(y: CGFloat(floatBob))
         .animation(.spring(response: 0.28, dampingFraction: 0.72), value: isTyping)
         .animation(.spring(response: 0.26, dampingFraction: 0.75), value: isCursorNear)
+        .animation(.spring(response: 0.26, dampingFraction: 0.75), value: isLookingAtTimer)
     }
 }
 
@@ -1521,17 +1754,33 @@ struct KuroCharacterView: View {
     var isCursorNear: Bool = false
     var isTyping: Bool = false
     var typingBurst: Bool = false
+    var typingPhase: Int = 0
+    var isFlowActive: Bool = false
+    var isLookingAtTimer: Bool = false
+    var isTimerLow: Bool = false
+    var isTimerUrgent: Bool = false
+    var timerLookX: Double = 0.0
+    var timerLookY: Double = 0.0
 
     var body: some View {
         let blinkPhase = sin(time * 1.7)
-        let isBlinking = blinkPhase > 0.96 && !isProcessing && !isDone && !isHappy && !isTyping
+        let isBlinking = blinkPhase > 0.96 && !isProcessing && !isDone && !isHappy && !isTyping && !isTimerUrgent
 
         // Fox ear angles:
         let leftEarAngle: Double = {
             if isHappy {
                 return sin(time * 18.0) * 12.0
+            } else if isLookingAtTimer {
+                return timerLookX * 4.0
             } else if isTyping {
-                return -14.0 // Cocked ear!
+                switch typingPhase {
+                case 1: return sin(time * 14.0) * 9.0 - 4.0
+                case 2: return 0.0
+                case 3: return -6.0
+                default: return -14.0 // Cocked ear!
+                }
+            } else if isTimerUrgent {
+                return sin(time * 26.0) * 12.0
             } else if isCursorNear {
                 return cursorLookX * 9.0 - 4.0
             }
@@ -1541,8 +1790,17 @@ struct KuroCharacterView: View {
         let rightEarAngle: Double = {
             if isHappy {
                 return -sin(time * 18.0) * 12.0
+            } else if isLookingAtTimer {
+                return timerLookX * 14.0 // Pointed toward timer!
             } else if isTyping {
-                return 18.0 // Alert swagger ear!
+                switch typingPhase {
+                case 1: return -sin(time * 14.0) * 9.0 + 4.0
+                case 2: return 0.0
+                case 3: return 10.0
+                default: return 18.0 // Alert swagger ear!
+                }
+            } else if isTimerUrgent {
+                return -sin(time * 26.0) * 12.0
             } else if isCursorNear {
                 return cursorLookX * 9.0 + 4.0
             }
@@ -1552,21 +1810,59 @@ struct KuroCharacterView: View {
         let headTilt: Double = {
             if isHappy {
                 return sin(time * 16.0) * 7.0
+            } else if isLookingAtTimer {
+                return timerLookX * 7.5
             } else if isTyping {
-                return -8.0 // Sassy swagger head tilt!
+                switch typingPhase {
+                case 1: return sin(time * 10.0) * 4.5 // Fox nodding to beat
+                case 2: return 0.0 // Predator lock-in
+                case 3: return 6.5 // Swagger smirk
+                default: return -8.0 // Sassy swagger side-eye
+                }
+            } else if isTimerLow {
+                return sin(time * 24.0) * (isTimerUrgent ? 1.6 : 0.8)
             } else if isCursorNear {
                 return cursorLookX * 7.5
             }
             return 0.0
         }()
 
-        let bob: CGFloat = isHappy ? (-2.5 + CGFloat(abs(sin(time * 14.0))) * -1.5) : (isHovered ? -1.0 : 0.0)
+        let bob: CGFloat = {
+            if isHappy {
+                return -2.5 + CGFloat(abs(sin(time * 14.0))) * -1.5
+            } else if isLookingAtTimer {
+                return CGFloat(-timerLookY * 1.5)
+            } else if isTyping {
+                switch typingPhase {
+                case 1: return -2.0 + CGFloat(abs(sin(time * (typingBurst ? 18.0 : 12.0)))) * -2.2
+                case 2: return -2.0
+                case 3: return 0.0
+                default: return -1.0
+                }
+            } else if isTimerUrgent {
+                return -2.0 + CGFloat(abs(sin(time * 18.0))) * -1.8
+            } else if isTimerLow {
+                return CGFloat(sin(time * 24.0) * 0.6)
+            } else if isHovered {
+                return -1.0
+            }
+            return 0.0
+        }()
 
         let (eyeOffsetX, eyeOffsetY): (CGFloat, CGFloat) = {
             if isHappy {
                 return (0.0, 0.0)
+            } else if isLookingAtTimer {
+                return (CGFloat(timerLookX * 2.0), CGFloat(-timerLookY * 1.1))
             } else if isTyping {
-                return (-1.8, 0.8) // Masterclass sassy side-eye!
+                switch typingPhase {
+                case 1: return (0.0, 0.9)
+                case 2: return (0.0, 0.0)
+                case 3: return (1.0, 0.4)
+                default: return (-1.8, 0.8)
+                }
+            } else if isTimerUrgent {
+                return (CGFloat(sin(time * 8.0) * 1.6), 0.0)
             } else if isCursorNear {
                 return (CGFloat(cursorLookX * 2.0), CGFloat(-cursorLookY * 1.1))
             }
@@ -1652,50 +1948,62 @@ struct KuroCharacterView: View {
                     VStack(spacing: 0.5) {
                         HStack(spacing: 4) {
                             // Left Eye
-                            ZStack {
-                                Capsule()
-                                    .fill(accentColor)
-                                    .frame(width: 3.4, height: 4.8)
-                                    .scaleEffect(y: isBlinking ? 0.15 : (isTyping ? 0.5 : 1.0))
-                                    .offset(x: eyeOffsetX, y: eyeOffsetY)
-                                    .shadow(color: accentColor.opacity(0.6), radius: 1.5)
-
-                                if (isCursorNear || isHovered) && !isBlinking && !isTyping {
-                                    Circle()
-                                        .fill(Color.white)
-                                        .frame(width: 1.1, height: 1.1)
-                                        .offset(x: eyeOffsetX - 0.4, y: eyeOffsetY - 0.8)
-                                }
-                            }
+                            Capsule()
+                                .fill(accentColor)
+                                .frame(width: isCursorNear || (isTyping && typingPhase == 2) ? 3.6 : 3.2, height: isTyping && typingPhase == 0 ? 2.5 : 4.5)
+                                .scaleEffect(y: isBlinking ? 0.15 : (isTyping && typingPhase == 0 ? 0.40 : 1.0))
+                                .offset(x: eyeOffsetX, y: eyeOffsetY)
+                                .shadow(color: accentColor.opacity(0.7), radius: 2)
 
                             // Right Eye
-                            ZStack {
-                                Capsule()
-                                    .fill(accentColor)
-                                    .frame(width: 3.4, height: 4.8)
-                                    .scaleEffect(y: isBlinking ? 0.15 : (isTyping ? 0.35 : 1.0))
-                                    .offset(x: eyeOffsetX, y: eyeOffsetY)
-                                    .shadow(color: accentColor.opacity(0.6), radius: 1.5)
-
-                                if (isCursorNear || isHovered) && !isBlinking && !isTyping {
-                                    Circle()
-                                        .fill(Color.white)
-                                        .frame(width: 1.1, height: 1.1)
-                                        .offset(x: eyeOffsetX - 0.4, y: eyeOffsetY - 0.8)
-                                }
-                            }
+                            Capsule()
+                                .fill(accentColor)
+                                .frame(width: isCursorNear || (isTyping && typingPhase == 2) ? 3.6 : 3.2, height: isTyping && typingPhase == 0 ? 2.5 : 4.5)
+                                .scaleEffect(y: isBlinking ? 0.15 : (isTyping && typingPhase == 0 ? 0.40 : 1.0))
+                                .offset(x: eyeOffsetX, y: eyeOffsetY)
+                                .shadow(color: accentColor.opacity(0.7), radius: 2)
                         }
+
+                        // Fox Snout & Smirk
+                        Circle()
+                            .fill(Color.black.opacity(0.9))
+                            .frame(width: 1.8, height: 1.2)
 
                         if isTyping {
-                            Text("¬‿¬")
-                                .font(.system(size: 3.8, weight: .bold))
+                            switch typingPhase {
+                            case 2:
+                                Text("o")
+                                    .font(.system(size: 4.5, weight: .bold))
+                                    .foregroundColor(accentColor.opacity(0.9))
+                                    .offset(y: -1)
+                            case 3:
+                                Text("^")
+                                    .font(.system(size: 5.0, weight: .bold))
+                                    .foregroundColor(accentColor.opacity(0.9))
+                                    .offset(y: -1)
+                            default:
+                                Text("v") // Fang smirk
+                                    .font(.system(size: 4.5, weight: .bold))
+                                    .foregroundColor(accentColor.opacity(0.9))
+                                    .offset(y: -1)
+                            }
+                        } else if isTimerUrgent {
+                            Text("^")
+                                .font(.system(size: 5.0, weight: .bold))
                                 .foregroundColor(accentColor.opacity(0.9))
-                        } else {
-                            Circle()
-                                .fill(Color.white.opacity(0.7))
-                                .frame(width: 1.5, height: 1.2)
+                                .offset(y: -1)
                         }
                     }
+                }
+
+                if isTimerUrgent {
+                    Text("⚡")
+                        .font(.system(size: 6))
+                        .offset(x: 8, y: -7 + sin(time * 8.0) * 1.2)
+                } else if isTimerLow {
+                    Text("💧")
+                        .font(.system(size: 5.5))
+                        .offset(x: 7, y: -6 + sin(time * 6.0) * 1.0)
                 }
             }
         }
@@ -1703,6 +2011,7 @@ struct KuroCharacterView: View {
         .offset(y: bob)
         .animation(.spring(response: 0.28, dampingFraction: 0.72), value: isTyping)
         .animation(.spring(response: 0.26, dampingFraction: 0.75), value: isCursorNear)
+        .animation(.spring(response: 0.26, dampingFraction: 0.75), value: isLookingAtTimer)
     }
 }
 
@@ -1738,6 +2047,35 @@ struct InteractiveCharacterView: View {
         let isDone = !state.isRecording && !state.isProcessing && !state.lastResultText.isEmpty
         let charType = state.hudCharacter.lowercased()
 
+        // 1. Dynamic typing state & phase calculations (Zero-stuck guarantee)
+        let now = ProcessInfo.processInfo.systemUptime
+        let isTyping = state.isUserTyping || (now - state.lastTypingTime < 1.30)
+        let typingDuration = max(0.0, now - state.typingStartTime)
+        // Transition phases smoothly every 2.4 seconds: 0 -> 1 -> 2 -> 3
+        let typingPhase = Int(typingDuration / 2.4) % 4
+
+        // 2. Flow mode timer awareness:
+        let isFlow = state.isFlowActive
+        let remaining = state.flowRemainingSeconds
+        let total = max(1, state.flowTotalSeconds)
+        let isTimerLow = isFlow && (remaining <= 180 || Double(remaining) / Double(total) <= 0.15)
+        let isTimerUrgent = isFlow && remaining <= 60
+
+        // Periodic glance at timer:
+        // When urgent, glance frequently (every 3.2s for 1.1s)
+        // When normal flow, glance every 10s for 1.8s
+        let timerPeriod: Double = isTimerUrgent ? 3.2 : (isTimerLow ? 5.5 : 10.0)
+        let timerGlanceDuration: Double = isTimerUrgent ? 1.1 : 1.6
+        let timeInCycle = time.truncatingRemainder(dividingBy: timerPeriod)
+        let isLookingAtTimer = isFlow && !isTyping && (timeInCycle < timerGlanceDuration)
+
+        // Direction to look at timer:
+        // If vertical HUD, timer is below character -> look down (Y = -1.5, X = 0.0)
+        // If horizontal HUD, timer is to the right of character -> look right (X = 1.6, Y = 0.0)
+        let isVertical = state.hudPosition == "left" || state.hudPosition == "right"
+        let timerLookX: CGFloat = isVertical ? 0.0 : 1.6
+        let timerLookY: CGFloat = isVertical ? -1.5 : 0.0
+
         ZStack {
             switch charType {
             case "neko", "cat":
@@ -1753,8 +2091,14 @@ struct InteractiveCharacterView: View {
                     cursorLookX: state.cursorLookX,
                     cursorLookY: state.cursorLookY,
                     isCursorNear: state.isCursorNear,
-                    isTyping: state.isUserTyping,
-                    typingBurst: state.typingSpeedBurst
+                    isTyping: isTyping,
+                    typingBurst: state.typingSpeedBurst,
+                    typingPhase: typingPhase,
+                    isLookingAtTimer: isLookingAtTimer,
+                    isTimerLow: isTimerLow,
+                    isTimerUrgent: isTimerUrgent,
+                    timerLookX: timerLookX,
+                    timerLookY: timerLookY
                 )
             case "luna", "spirit", "ghost", "birb":
                 LunaCharacterView(
@@ -1769,8 +2113,14 @@ struct InteractiveCharacterView: View {
                     cursorLookX: state.cursorLookX,
                     cursorLookY: state.cursorLookY,
                     isCursorNear: state.isCursorNear,
-                    isTyping: state.isUserTyping,
-                    typingBurst: state.typingSpeedBurst
+                    isTyping: isTyping,
+                    typingBurst: state.typingSpeedBurst,
+                    typingPhase: typingPhase,
+                    isLookingAtTimer: isLookingAtTimer,
+                    isTimerLow: isTimerLow,
+                    isTimerUrgent: isTimerUrgent,
+                    timerLookX: timerLookX,
+                    timerLookY: timerLookY
                 )
             case "kuro", "fox", "orb_gears":
                 KuroCharacterView(
@@ -1785,8 +2135,14 @@ struct InteractiveCharacterView: View {
                     cursorLookX: state.cursorLookX,
                     cursorLookY: state.cursorLookY,
                     isCursorNear: state.isCursorNear,
-                    isTyping: state.isUserTyping,
-                    typingBurst: state.typingSpeedBurst
+                    isTyping: isTyping,
+                    typingBurst: state.typingSpeedBurst,
+                    typingPhase: typingPhase,
+                    isLookingAtTimer: isLookingAtTimer,
+                    isTimerLow: isTimerLow,
+                    isTimerUrgent: isTimerUrgent,
+                    timerLookX: timerLookX,
+                    timerLookY: timerLookY
                 )
             case "custom":
                 let customPath = FileManager.default.homeDirectoryForCurrentUser
@@ -1807,8 +2163,14 @@ struct InteractiveCharacterView: View {
                         cursorLookX: state.cursorLookX,
                         cursorLookY: state.cursorLookY,
                         isCursorNear: state.isCursorNear,
-                        isTyping: state.isUserTyping,
-                        typingBurst: state.typingSpeedBurst
+                        isTyping: isTyping,
+                        typingBurst: state.typingSpeedBurst,
+                        typingPhase: typingPhase,
+                        isLookingAtTimer: isLookingAtTimer,
+                        isTimerLow: isTimerLow,
+                        isTimerUrgent: isTimerUrgent,
+                        timerLookX: timerLookX,
+                        timerLookY: timerLookY
                     )
                 }
             default: // "gearbot"
@@ -1824,8 +2186,14 @@ struct InteractiveCharacterView: View {
                     cursorLookX: state.cursorLookX,
                     cursorLookY: state.cursorLookY,
                     isCursorNear: state.isCursorNear,
-                    isTyping: state.isUserTyping,
-                    typingBurst: state.typingSpeedBurst
+                    isTyping: isTyping,
+                    typingBurst: state.typingSpeedBurst,
+                    typingPhase: typingPhase,
+                    isLookingAtTimer: isLookingAtTimer,
+                    isTimerLow: isTimerLow,
+                    isTimerUrgent: isTimerUrgent,
+                    timerLookX: timerLookX,
+                    timerLookY: timerLookY
                 )
             }
         }
@@ -2083,10 +2451,16 @@ struct FloatingHUDView: View {
                                     .frame(width: 10, height: 1)
 
                                 let mins = state.flowRemainingSeconds / 60
-                                Text("\(mins)m")
+                                let secs = state.flowRemainingSeconds % 60
+                                let isLow = state.flowRemainingSeconds <= 180
+                                let isUrgent = state.flowRemainingSeconds <= 60
+                                let timerColor: Color = isUrgent ? Color(red: 1.0, green: 0.35, blue: 0.35) : (isLow ? Color.orange : state.hudAccentColor)
+
+                                Text(mins > 0 ? "\(mins)m" : "\(secs)s")
                                     .font(.system(size: isMini ? 8 : (isSpacious ? 9.5 : 8.5), weight: .bold, design: .monospaced))
-                                    .foregroundColor(state.isFlowPaused ? .secondary : state.hudAccentColor)
-                                    .opacity(state.isFlowPaused ? (Int(time * 2) % 2 == 0 ? 0.4 : 1.0) : 1.0)
+                                    .foregroundColor(state.isFlowPaused ? .secondary : timerColor)
+                                    .opacity(state.isFlowPaused ? (Int(time * 2) % 2 == 0 ? 0.4 : 1.0) : (isUrgent ? (Int(time * 3) % 2 == 0 ? 0.75 : 1.0) : 1.0))
+                                    .scaleEffect(isUrgent ? (1.0 + sin(time * 8.0) * 0.08) : 1.0)
                             }
                             .padding(.vertical, 4)
                             .transition(.asymmetric(
@@ -2207,10 +2581,15 @@ struct FloatingHUDView: View {
                                         .fill(Color.white.opacity(0.18))
                                         .frame(width: 1, height: 11)
 
+                                    let isLow = state.flowRemainingSeconds <= 180
+                                    let isUrgent = state.flowRemainingSeconds <= 60
+                                    let timerColor: Color = isUrgent ? Color(red: 1.0, green: 0.35, blue: 0.35) : (isLow ? Color.orange : state.hudAccentColor)
+
                                     Text(state.flowTimeString)
                                         .font(.system(size: isMini ? 9.5 : (isSpacious ? 11.5 : 10.5), weight: .bold, design: .monospaced))
-                                        .foregroundColor(state.isFlowPaused ? .secondary : state.hudAccentColor)
-                                        .opacity(state.isFlowPaused ? (Int(time * 2) % 2 == 0 ? 0.4 : 1.0) : 1.0)
+                                        .foregroundColor(state.isFlowPaused ? .secondary : timerColor)
+                                        .opacity(state.isFlowPaused ? (Int(time * 2) % 2 == 0 ? 0.4 : 1.0) : (isUrgent ? (Int(time * 3) % 2 == 0 ? 0.75 : 1.0) : 1.0))
+                                        .scaleEffect(isUrgent ? (1.0 + sin(time * 8.0) * 0.06) : 1.0)
                                 }
                                 .padding(.horizontal, 6)
                                 .transition(.asymmetric(
@@ -2383,7 +2762,7 @@ final class FloatingHUDController {
     }
 
     func currentHUDCenter() -> NSPoint {
-        guard let p = panel, p.isVisible else { return .zero }
+        guard let p = panel else { return .zero }
         let frame = p.frame
         return NSPoint(x: frame.midX, y: frame.midY)
     }
@@ -3033,6 +3412,12 @@ final class CompanionTrackerManager {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
 
+            if now - AppState.shared.lastTypingTime > 1.8 {
+                AppState.shared.typingStartTime = now
+            }
+            AppState.shared.lastTypingTime = now
+            AppState.shared.typingKeystrokeCount += 1
+
             // Keep keystrokes in last 1.8s to detect fast typing bursts
             self.recentKeyTimestamps = self.recentKeyTimestamps.filter { now - $0 < 1.8 }
             self.recentKeyTimestamps.append(now)
@@ -3044,12 +3429,14 @@ final class CompanionTrackerManager {
                 AppState.shared.typingSpeedBurst = isBurst
             }
 
-            // Debounce timer resets typing side-eye after 1.35s of inactivity
+            // Debounce timer resets typing side-eye after 1.25s of inactivity, added to common modes!
             self.typingResetTimer?.invalidate()
-            self.typingResetTimer = Timer.scheduledTimer(withTimeInterval: 1.35, repeats: false) { _ in
+            let t = Timer.scheduledTimer(withTimeInterval: 1.25, repeats: false) { _ in
                 AppState.shared.isUserTyping = false
                 AppState.shared.typingSpeedBurst = false
             }
+            RunLoop.main.add(t, forMode: .common)
+            self.typingResetTimer = t
         }
     }
 }
