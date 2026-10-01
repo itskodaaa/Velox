@@ -1,0 +1,33 @@
+# macOS
+.DS_Store
+*.swp
+*.swo
+
+# Build artifacts
+Velox_bin
+ParakeetFlow_bin
+Velox.app/
+ParakeetFlow.app/
+.build/
+__pycache__/
+*.pyc
+
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# User config (contains API keys)
+config.json
+
+# Temporary audio recordings
+/tmp/parakeet_*.wav
+
+# IDE
+.vscode/
+.idea/
+*.xcodeproj/
+*.xcworkspace/
+
+# Logs
+*.log
