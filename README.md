@@ -68,11 +68,25 @@ Press **⌥ Space** anywhere on your Mac. Speak. Velox transcribes your speech u
 - Feeds these as context cues to Whisper and the polisher for domain-specific accuracy
 - Variable names, file names, and technical terms from your screen are transcribed correctly
 
+### ⚡ Flow Mode (Focus Timer)
+- Right-click the desktop mascot anytime to trigger **Flow Mode** (Pomodoro / Deep Work)
+- Presets: **25 min Focus**, **45 min Deep Work**, **60 min Flow State**, **15 min Quick Sprint**
+- Real-time countdown clock stays pinned beside your pet, keeping you locked in
+- Smoothly morphs into voice waveform when dictating, and morphs back when finished
+- Native macOS chime and banner notification when sessions complete
+
+### 🎛️ De-Cluttered Two-Pane Control Center
+- High-end sidebar navigation with 4 dedicated panes: **Dictate**, **Flow**, **Companion**, **Settings**
+- Ultra-clean first impression on click with zero visual clutter
+- Tactile frosted microphone orb with live reactive audio pulse
+- Fast toggle between 0ms offline rules and cloud LLM polish
+
 ### 🤖 Desktop Pet Companion
 - A floating animated character (Gearbot, Birb, Neko, or Orb) lives on your desktop
 - Reacts to hover and clicks with cute animations
-- Shows live waveform metering during dictation
+- Morphing voice waveform animation during dictation
 - Snaps to left, center, or right of screen with smooth dock-aware positioning
+- 6 vibrant accent color themes (Amber, Rose, Emerald, Cyan, Purple, Monochrome)
 
 ### 🎛️ Web Dashboard
 - Beautiful dark-mode dashboard at `http://localhost:18765`

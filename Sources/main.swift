@@ -4,6 +4,24 @@ import Carbon.HIToolbox
 import Combine
 import Foundation
 import SwiftUI
+import UserNotifications
+
+// MARK: - Control Center Tab Navigation
+enum ControlCenterTab: String, CaseIterable {
+    case dictate = "Dictate"
+    case flow = "Flow"
+    case companion = "Companion"
+    case settings = "Settings"
+
+    var icon: String {
+        switch self {
+        case .dictate: return "mic.fill"
+        case .flow: return "timer"
+        case .companion: return "sparkles"
+        case .settings: return "slider.horizontal.3"
+        }
+    }
+}
 
 // MARK: - App State & Storage
 final class AppState: ObservableObject {
@@ -21,6 +39,80 @@ final class AppState: ObservableObject {
     @Published var isMicrophoneGranted: Bool = (AVCaptureDevice.authorizationStatus(for: .audio) == .authorized)
     @Published var currentMicName: String = AVCaptureDevice.default(for: .audio)?.localizedName ?? "Default Microphone"
     @Published var selectedMicDevice: String = ":default"
+
+    // Menu Bar Control Center Active Tab
+    @Published var activeTab: ControlCenterTab = .dictate
+
+    // MARK: - Flow Mode Focus Timer
+    @Published var isFlowActive: Bool = false
+    @Published var isFlowPaused: Bool = false
+    @Published var flowRemainingSeconds: Int = 1500
+    @Published var flowTotalSeconds: Int = 1500
+    private var flowTimer: Timer? = nil
+
+    var flowTimeString: String {
+        let mins = flowRemainingSeconds / 60
+        let secs = flowRemainingSeconds % 60
+        return String(format: "%02d:%02d", mins, secs)
+    }
+
+    var flowProgress: CGFloat {
+        guard flowTotalSeconds > 0 else { return 0 }
+        return CGFloat(flowRemainingSeconds) / CGFloat(flowTotalSeconds)
+    }
+
+    func startFlow(minutes: Int) {
+        flowTotalSeconds = minutes * 60
+        flowRemainingSeconds = flowTotalSeconds
+        isFlowPaused = false
+        isFlowActive = true
+
+        flowTimer?.invalidate()
+        flowTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            if self.isFlowActive && !self.isFlowPaused {
+                if self.flowRemainingSeconds > 0 {
+                    self.flowRemainingSeconds -= 1
+                } else {
+                    self.completeFlowSession()
+                }
+            }
+        }
+
+        FloatingHUDController.shared.show()
+    }
+
+    func toggleFlowPause() {
+        guard isFlowActive else { return }
+        isFlowPaused.toggle()
+    }
+
+    func addFlowMinutes(_ minutes: Int) {
+        guard isFlowActive else { return }
+        flowRemainingSeconds += minutes * 60
+        flowTotalSeconds += minutes * 60
+    }
+
+    func stopFlow() {
+        flowTimer?.invalidate()
+        flowTimer = nil
+        isFlowActive = false
+        isFlowPaused = false
+    }
+
+    func completeFlowSession() {
+        stopFlow()
+        NSSound(named: "Glass")?.play()
+        FloatingHUDController.shared.triggerCuteClickReaction()
+
+        let center = UNUserNotificationCenter.current()
+        let content = UNMutableNotificationContent()
+        content.title = "Flow Session Completed! 🏆"
+        content.body = "Great focus! Take a 5-minute break and recharge."
+        content.sound = .default
+        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+        center.add(request, withCompletionHandler: nil)
+    }
 
     // Settings
     @AppStorage("active_shortcut") var activeShortcut: String = "opt_space"
@@ -81,6 +173,7 @@ final class AppState: ObservableObject {
 
     private init() {
         loadConfigFromDisk()
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
     private var configURL: URL {
@@ -1625,8 +1718,12 @@ struct FloatingHUDView: View {
 
             if isVertical {
                 // VERTICAL CAPSULE FOR LEFT / RIGHT SCREEN EDGES
+                let isFlow = state.isFlowActive && !state.isRecording && !state.isProcessing
                 let pillWidth: CGFloat = isMini ? 24 : (isSpacious ? 30 : 26)
                 let pillHeight: CGFloat = {
+                    if isFlow {
+                        return isMini ? 66 : (isSpacious ? 82 : 74)
+                    }
                     if state.listeningStyle == "character" {
                         return isMini ? 36 : (isSpacious ? 46 : 42)
                     }
@@ -1665,30 +1762,51 @@ struct FloatingHUDView: View {
 
                     // Unified Centered Morphing Content
                     ZStack {
-                        if state.listeningStyle == "waveform" {
-                            if state.isProcessing {
-                                CenteredProcessingDotsView(state: state, time: time)
-                                    .transition(.scale(scale: 0.65).combined(with: .opacity))
+                        if state.isRecording {
+                            if state.listeningStyle == "character" {
+                                ListeningCharacterView(state: state, time: time)
                             } else {
                                 OrganicVoiceWaveform(state: state, time: time, isVertical: true)
-                                    .transition(.scale(scale: 0.65).combined(with: .opacity))
-                            }
-                        } else if state.listeningStyle == "character" {
-                            ListeningCharacterView(state: state, time: time)
-                        } else {
-                            // Morph Mode (Default): Character morphs into centered waveform!
-                            if state.isRecording {
-                                OrganicVoiceWaveform(state: state, time: time, isVertical: true)
                                     .transition(.asymmetric(
                                         insertion: .scale(scale: 0.65).combined(with: .opacity),
                                         removal: .scale(scale: 0.65).combined(with: .opacity)
                                     ))
-                            } else if state.isProcessing {
+                            }
+                        } else if state.isProcessing {
+                            if state.listeningStyle == "character" {
+                                ListeningCharacterView(state: state, time: time)
+                            } else {
                                 CenteredProcessingDotsView(state: state, time: time)
                                     .transition(.asymmetric(
                                         insertion: .scale(scale: 0.65).combined(with: .opacity),
                                         removal: .scale(scale: 0.65).combined(with: .opacity)
                                     ))
+                            }
+                        } else if state.isFlowActive {
+                            // Flow Mode: Mascot on top, countdown below
+                            VStack(spacing: 3) {
+                                InteractiveCharacterView(state: state, time: time)
+                                    .frame(width: 18, height: 18)
+
+                                Rectangle()
+                                    .fill(Color.white.opacity(0.18))
+                                    .frame(width: 10, height: 1)
+
+                                let mins = state.flowRemainingSeconds / 60
+                                Text("\(mins)m")
+                                    .font(.system(size: isMini ? 8 : (isSpacious ? 9.5 : 8.5), weight: .bold, design: .monospaced))
+                                    .foregroundColor(state.isFlowPaused ? .secondary : state.hudAccentColor)
+                                    .opacity(state.isFlowPaused ? (Int(time * 2) % 2 == 0 ? 0.4 : 1.0) : 1.0)
+                            }
+                            .padding(.vertical, 4)
+                            .transition(.asymmetric(
+                                insertion: .scale(scale: 0.75).combined(with: .opacity),
+                                removal: .scale(scale: 0.75).combined(with: .opacity)
+                            ))
+                        } else {
+                            if state.listeningStyle == "waveform" {
+                                OrganicVoiceWaveform(state: state, time: time, isVertical: true)
+                                    .transition(.scale(scale: 0.65).combined(with: .opacity))
                             } else {
                                 InteractiveCharacterView(state: state, time: time)
                                     .transition(.asymmetric(
@@ -1706,11 +1824,17 @@ struct FloatingHUDView: View {
                 .animation(.spring(response: 0.22, dampingFraction: 0.75), value: state.isHUDHovered)
                 .animation(.spring(response: 0.36, dampingFraction: 0.80), value: state.isRecording)
                 .animation(.spring(response: 0.36, dampingFraction: 0.80), value: state.isProcessing)
+                .animation(.spring(response: 0.28, dampingFraction: 0.72), value: state.isFlowActive)
+                .animation(.spring(response: 0.28, dampingFraction: 0.72), value: state.isFlowPaused)
                 .scaleEffect(state.isHUDDragging ? 1.05 : 1.0)
                 .frame(width: 50, height: 96, alignment: .center)
             } else {
                 // HORIZONTAL CAPSULE FOR BOTTOM CENTER
+                let isFlow = state.isFlowActive && !state.isRecording && !state.isProcessing
                 let pillWidth: CGFloat = {
+                    if isFlow {
+                        return isMini ? 74 : (isSpacious ? 92 : 84)
+                    }
                     if state.listeningStyle == "character" {
                         return isMini ? 36 : (isSpacious ? 46 : 42)
                     }
@@ -1764,30 +1888,49 @@ struct FloatingHUDView: View {
 
                         // Unified Centered Morphing Content
                         ZStack {
-                            if state.listeningStyle == "waveform" {
-                                if state.isProcessing {
-                                    CenteredProcessingDotsView(state: state, time: time)
-                                        .transition(.scale(scale: 0.65).combined(with: .opacity))
+                            if state.isRecording {
+                                if state.listeningStyle == "character" {
+                                    ListeningCharacterView(state: state, time: time)
                                 } else {
                                     OrganicVoiceWaveform(state: state, time: time, isVertical: false)
-                                        .transition(.scale(scale: 0.65).combined(with: .opacity))
-                                }
-                            } else if state.listeningStyle == "character" {
-                                ListeningCharacterView(state: state, time: time)
-                            } else {
-                                // Morph Mode (Default): Character morphs into centered waveform!
-                                if state.isRecording {
-                                    OrganicVoiceWaveform(state: state, time: time, isVertical: false)
                                         .transition(.asymmetric(
                                             insertion: .scale(scale: 0.65).combined(with: .opacity),
                                             removal: .scale(scale: 0.65).combined(with: .opacity)
                                         ))
-                                } else if state.isProcessing {
+                                }
+                            } else if state.isProcessing {
+                                if state.listeningStyle == "character" {
+                                    ListeningCharacterView(state: state, time: time)
+                                } else {
                                     CenteredProcessingDotsView(state: state, time: time)
                                         .transition(.asymmetric(
                                             insertion: .scale(scale: 0.65).combined(with: .opacity),
                                             removal: .scale(scale: 0.65).combined(with: .opacity)
                                         ))
+                                }
+                            } else if state.isFlowActive {
+                                HStack(spacing: 5) {
+                                    InteractiveCharacterView(state: state, time: time)
+                                        .frame(width: 20, height: 20)
+
+                                    Rectangle()
+                                        .fill(Color.white.opacity(0.18))
+                                        .frame(width: 1, height: 11)
+
+                                    Text(state.flowTimeString)
+                                        .font(.system(size: isMini ? 9.5 : (isSpacious ? 11.5 : 10.5), weight: .bold, design: .monospaced))
+                                        .foregroundColor(state.isFlowPaused ? .secondary : state.hudAccentColor)
+                                        .opacity(state.isFlowPaused ? (Int(time * 2) % 2 == 0 ? 0.4 : 1.0) : 1.0)
+                                }
+                                .padding(.horizontal, 6)
+                                .transition(.asymmetric(
+                                    insertion: .scale(scale: 0.75).combined(with: .opacity),
+                                    removal: .scale(scale: 0.75).combined(with: .opacity)
+                                ))
+                            } else {
+                                if state.listeningStyle == "waveform" {
+                                    OrganicVoiceWaveform(state: state, time: time, isVertical: false)
+                                        .transition(.scale(scale: 0.65).combined(with: .opacity))
                                 } else {
                                     InteractiveCharacterView(state: state, time: time)
                                         .transition(.asymmetric(
@@ -1806,10 +1949,12 @@ struct FloatingHUDView: View {
                     .animation(.spring(response: 0.22, dampingFraction: 0.75), value: state.isHUDHovered)
                     .animation(.spring(response: 0.36, dampingFraction: 0.80), value: state.isRecording)
                     .animation(.spring(response: 0.36, dampingFraction: 0.80), value: state.isProcessing)
+                    .animation(.spring(response: 0.28, dampingFraction: 0.72), value: state.isFlowActive)
+                    .animation(.spring(response: 0.28, dampingFraction: 0.72), value: state.isFlowPaused)
                     .scaleEffect(state.isHUDDragging ? 1.05 : 1.0)
                     .animation(.spring(response: 0.24, dampingFraction: 0.72), value: state.isHUDDragging)
                 }
-                .frame(width: 96, height: 50, alignment: .bottom)
+                .frame(width: 108, height: 50, alignment: .bottom)
                 .padding(.bottom, 4)
             }
         }
@@ -1909,6 +2054,11 @@ final class DraggableHUDView<Content: View>: NSHostingView<Content> {
             }
         }
     }
+
+    override func rightMouseDown(with event: NSEvent) {
+        let menu = FloatingHUDController.shared.buildContextMenu()
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
 }
 
 // MARK: - Floating Desktop Companion Window Controller (Auto External Monitor Middle & 3-Zone Edge Snapping)
@@ -1938,8 +2088,157 @@ final class FloatingHUDController {
         if position == "left" || position == "right" {
             return NSSize(width: 50, height: 96)
         } else {
-            return NSSize(width: 96, height: 50)
+            return NSSize(width: 108, height: 50)
         }
+    }
+
+    // MARK: - Mascot & Flow Mode Context Menu
+    func buildContextMenu() -> NSMenu {
+        let menu = NSMenu()
+
+        // 1. Flow Mode Section
+        let titleText = AppState.shared.isFlowActive
+            ? "⚡ Flow: \(AppState.shared.flowTimeString) \(AppState.shared.isFlowPaused ? "(Paused)" : "")"
+            : "⚡ Flow Mode (Focus Timer)"
+        let titleItem = NSMenuItem(title: titleText, action: nil, keyEquivalent: "")
+        titleItem.isEnabled = false
+        menu.addItem(titleItem)
+
+        if AppState.shared.isFlowActive {
+            let pauseItem = NSMenuItem(
+                title: AppState.shared.isFlowPaused ? "▶️ Resume Focus" : "⏸ Pause Focus",
+                action: #selector(contextToggleFlowPause),
+                keyEquivalent: ""
+            )
+            pauseItem.target = self
+            menu.addItem(pauseItem)
+
+            let add5Item = NSMenuItem(
+                title: "➕ Add 5 Minutes",
+                action: #selector(contextAdd5Minutes),
+                keyEquivalent: ""
+            )
+            add5Item.target = self
+            menu.addItem(add5Item)
+
+            let stopItem = NSMenuItem(
+                title: "⏹ Stop Session",
+                action: #selector(contextStopFlow),
+                keyEquivalent: ""
+            )
+            stopItem.target = self
+            menu.addItem(stopItem)
+        } else {
+            let p25 = NSMenuItem(title: "🍅 25 min Focus (Pomodoro)", action: #selector(contextStart25Min), keyEquivalent: "")
+            p25.target = self
+            menu.addItem(p25)
+
+            let p45 = NSMenuItem(title: "🌊 45 min Deep Work", action: #selector(contextStart45Min), keyEquivalent: "")
+            p45.target = self
+            menu.addItem(p45)
+
+            let p60 = NSMenuItem(title: "🚀 60 min Flow State", action: #selector(contextStart60Min), keyEquivalent: "")
+            p60.target = self
+            menu.addItem(p60)
+
+            let p15 = NSMenuItem(title: "⚡ 15 min Quick Sprint", action: #selector(contextStart15Min), keyEquivalent: "")
+            p15.target = self
+            menu.addItem(p15)
+        }
+
+        menu.addItem(NSMenuItem.separator())
+
+        // 2. Companion Mascot Submenu
+        let mascotMenu = NSMenu()
+        let bots: [(id: String, name: String)] = [
+            ("gearbot", "🤖 GearBot"),
+            ("birb", "🦜 Birb"),
+            ("neko", "🐱 Neko"),
+            ("orb_gears", "⚙️ Tourbillon Orb")
+        ]
+        for bot in bots {
+            let item = NSMenuItem(title: bot.name, action: #selector(contextSelectMascot(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = bot.id
+            if AppState.shared.hudCharacter == bot.id {
+                item.state = .on
+            }
+            mascotMenu.addItem(item)
+        }
+        let mascotSubmenuItem = NSMenuItem(title: "Companion Mascot", action: nil, keyEquivalent: "")
+        mascotSubmenuItem.submenu = mascotMenu
+        menu.addItem(mascotSubmenuItem)
+
+        // 3. Dock Position Submenu
+        let posMenu = NSMenu()
+        let positions: [(id: String, name: String)] = [
+            ("left", "Left Edge"),
+            ("bottom_center", "Dock Middle (Default)"),
+            ("right", "Right Edge")
+        ]
+        for pos in positions {
+            let item = NSMenuItem(title: pos.name, action: #selector(contextSelectPosition(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = pos.id
+            if AppState.shared.hudPosition == pos.id {
+                item.state = .on
+            }
+            posMenu.addItem(item)
+        }
+        let posSubmenuItem = NSMenuItem(title: "Dock Position", action: nil, keyEquivalent: "")
+        posSubmenuItem.submenu = posMenu
+        menu.addItem(posSubmenuItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // 4. Control Center & Dashboard
+        let controlCenterItem = NSMenuItem(title: "Control Center...", action: #selector(contextOpenControlCenter), keyEquivalent: "")
+        controlCenterItem.target = self
+        menu.addItem(controlCenterItem)
+
+        let dashItem = NSMenuItem(title: "Web Dashboard & Settings", action: #selector(contextOpenDashboard), keyEquivalent: "")
+        dashItem.target = self
+        menu.addItem(dashItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        let quitItem = NSMenuItem(title: "Quit Velox", action: #selector(contextQuit), keyEquivalent: "q")
+        quitItem.target = self
+        menu.addItem(quitItem)
+
+        return menu
+    }
+
+    @objc func contextStart25Min() { AppState.shared.startFlow(minutes: 25) }
+    @objc func contextStart45Min() { AppState.shared.startFlow(minutes: 45) }
+    @objc func contextStart60Min() { AppState.shared.startFlow(minutes: 60) }
+    @objc func contextStart15Min() { AppState.shared.startFlow(minutes: 15) }
+    @objc func contextToggleFlowPause() { AppState.shared.toggleFlowPause() }
+    @objc func contextAdd5Minutes() { AppState.shared.addFlowMinutes(5) }
+    @objc func contextStopFlow() { AppState.shared.stopFlow() }
+    @objc func contextSelectMascot(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        AppState.shared.hudCharacter = id
+        AppState.shared.saveConfigToDisk()
+        show()
+    }
+    @objc func contextSelectPosition(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        AppState.shared.hudPosition = id
+        AppState.shared.hudYOffset = 0.0
+        AppState.shared.saveConfigToDisk()
+        updatePosition(animated: true)
+    }
+    @objc func contextOpenControlCenter() {
+        AppDelegate.shared.showPopover()
+    }
+    @objc func contextOpenDashboard() {
+        if let url = URL(string: "http://127.0.0.1:18765/history#settings") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+    @objc func contextQuit() {
+        NSApp.terminate(nil)
     }
 
     func currentTargetScreen() -> NSScreen {
@@ -2101,23 +2400,24 @@ final class FloatingHUDController {
         let yOffset = CGFloat(AppState.shared.hudYOffset)
         let effectiveDockTop = getLiveDockTop(for: screen)
         let baseSpacing: CGFloat = 14.0
+        let pSize = panelSize(for: position)
 
         switch position {
         case "left":
             // DOCKED TO LEFT SCREEN EDGE (Vertically Centered)
             let x = fullScreenRect.origin.x + 8.0
-            let y = fullScreenRect.origin.y + (fullScreenRect.height - 96.0) / 2.0
+            let y = fullScreenRect.origin.y + (fullScreenRect.height - pSize.height) / 2.0
             return NSPoint(x: x, y: y)
 
         case "right":
             // DOCKED TO RIGHT SCREEN EDGE (Vertically Centered)
-            let x = fullScreenRect.origin.x + fullScreenRect.width - 50.0 - 8.0
-            let y = fullScreenRect.origin.y + (fullScreenRect.height - 96.0) / 2.0
+            let x = fullScreenRect.origin.x + fullScreenRect.width - pSize.width - 8.0
+            let y = fullScreenRect.origin.y + (fullScreenRect.height - pSize.height) / 2.0
             return NSPoint(x: x, y: y)
 
         default: // "bottom_center", "center", "middle"
             // ALWAYS STAY IN THE EXACT HORIZONTAL MIDDLE OF THE SCREEN
-            let x = fullScreenRect.origin.x + (fullScreenRect.width - 96.0) / 2.0
+            let x = fullScreenRect.origin.x + (fullScreenRect.width - pSize.width) / 2.0
             let dockSnugY = max(fullScreenRect.origin.y + baseSpacing, fullScreenRect.origin.y + effectiveDockTop + yOffset + baseSpacing)
             return NSPoint(x: x, y: dockSnugY)
         }
@@ -2189,7 +2489,7 @@ final class FloatingHUDController {
     }
 
     func hide() {
-        if AppState.shared.alwaysShowCompanion {
+        if AppState.shared.alwaysShowCompanion || AppState.shared.isFlowActive {
             return
         }
         panel?.orderOut(nil)
@@ -2320,28 +2620,131 @@ final class FloatingHUDController {
     }
 }
 
-// MARK: - Ultra-Minimalist, Subdued Luxury Menu Bar Popover
+// MARK: - Ultra-Clean Two-Pane Menu Bar Control Center
 struct MenuBarControlCenterView: View {
     @ObservedObject var state = AppState.shared
     private let pollTimer = Timer.publish(every: 0.8, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        VStack(spacing: 11) {
-            // Header: Minimal & Quiet
-            HStack {
-                HStack(spacing: 5) {
+        HStack(spacing: 0) {
+            // 1. LEFT SIDEBAR NAVIGATION
+            VStack(spacing: 6) {
+                // Brand Mark
+                VStack(spacing: 3) {
                     Image(systemName: "waveform.badge.microphone")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(state.hudAccentColor)
+                    Text("VELOX")
+                        .font(.system(size: 8.5, weight: .black, design: .rounded))
                         .foregroundColor(.primary.opacity(0.85))
-                    Text("Velox")
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .tracking(1.0)
+                }
+                .padding(.top, 10)
+                .padding(.bottom, 6)
+
+                // Navigation Tabs
+                VStack(spacing: 4) {
+                    SidebarTabButton(tab: .dictate, current: state.activeTab) { state.activeTab = .dictate }
+                    SidebarTabButton(tab: .flow, current: state.activeTab) { state.activeTab = .flow }
+                    SidebarTabButton(tab: .companion, current: state.activeTab) { state.activeTab = .companion }
+                    SidebarTabButton(tab: .settings, current: state.activeTab) { state.activeTab = .settings }
                 }
 
                 Spacer()
 
+                // Status Indicator at bottom of sidebar
+                HStack(spacing: 3) {
+                    Circle()
+                        .fill(state.daemonReady ? Color.green.opacity(0.85) : Color.orange)
+                        .frame(width: 5, height: 5)
+                    Text(state.daemonReady ? "Ready" : "Offline")
+                        .font(.system(size: 8, weight: .medium))
+                        .foregroundColor(.secondary)
+                }
+                .padding(.bottom, 10)
+            }
+            .frame(width: 76)
+            .background(Color.primary.opacity(0.035))
+            .overlay(
+                Rectangle()
+                    .frame(width: 1)
+                    .foregroundColor(Color.primary.opacity(0.08)),
+                alignment: .trailing
+            )
+
+            // 2. RIGHT CONTENT PANE
+            VStack(spacing: 0) {
+                Group {
+                    switch state.activeTab {
+                    case .dictate:
+                        DictateTabPane()
+                    case .flow:
+                        FlowTabPane()
+                    case .companion:
+                        CompanionTabPane()
+                    case .settings:
+                        SettingsTabPane()
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .frame(width: 274)
+        }
+        .frame(width: 350, height: 330)
+        .onAppear {
+            state.loadConfigFromDisk()
+            state.refreshPermissions()
+        }
+        .onReceive(pollTimer) { _ in
+            state.refreshPermissions()
+        }
+    }
+}
+
+// MARK: - Sidebar Tab Button
+struct SidebarTabButton: View {
+    let tab: ControlCenterTab
+    let current: ControlCenterTab
+    let action: () -> Void
+
+    var isSelected: Bool { tab == current }
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 3) {
+                Image(systemName: tab.icon)
+                    .font(.system(size: 13, weight: isSelected ? .bold : .regular))
+                    .foregroundColor(isSelected ? AppState.shared.hudAccentColor : .secondary)
+                Text(tab.rawValue)
+                    .font(.system(size: 9, weight: isSelected ? .bold : .medium))
+                    .foregroundColor(isSelected ? .primary : .secondary)
+            }
+            .frame(width: 64, height: 42)
+            .background(
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(isSelected ? Color.primary.opacity(0.09) : Color.clear)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Tab Pane 1: Dictation (Clean & Spacious on First Sight)
+struct DictateTabPane: View {
+    @ObservedObject var state = AppState.shared
+
+    var body: some View {
+        VStack(spacing: 12) {
+            // Header
+            HStack {
+                Text("Dictation")
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                Spacer()
                 HStack(spacing: 4) {
                     Circle()
-                        .fill(state.daemonReady ? Color.green.opacity(0.8) : Color.secondary)
+                        .fill(state.daemonReady ? Color.green.opacity(0.85) : Color.orange)
                         .frame(width: 5, height: 5)
                     Text(state.sttEngine == "groq" ? "Groq Large v3" : "M1 Turbo")
                         .font(.system(size: 9, weight: .medium))
@@ -2349,7 +2752,7 @@ struct MenuBarControlCenterView: View {
                 }
             }
 
-            // Permissions Alert Banner (if needed)
+            // Permissions Alert (if needed)
             if !state.isMicrophoneGranted || !state.isAccessibilityGranted {
                 VStack(spacing: 5) {
                     if !state.isMicrophoneGranted {
@@ -2357,8 +2760,8 @@ struct MenuBarControlCenterView: View {
                             Image(systemName: "mic.slash.fill")
                                 .font(.system(size: 10))
                                 .foregroundColor(Color(red: 0.88, green: 0.52, blue: 0.2))
-                            Text("Mic permission needed")
-                                .font(.system(size: 10, weight: .medium))
+                            Text("Mic needed")
+                                .font(.system(size: 9.5, weight: .medium))
                             Spacer()
                             Button("Enable") { state.requestMicrophone() }
                                 .font(.system(size: 9, weight: .semibold))
@@ -2374,8 +2777,8 @@ struct MenuBarControlCenterView: View {
                             Image(systemName: "lock.shield.fill")
                                 .font(.system(size: 10))
                                 .foregroundColor(Color(red: 0.88, green: 0.52, blue: 0.2))
-                            Text("Accessibility needed to paste")
-                                .font(.system(size: 10, weight: .medium))
+                            Text("Paste needed")
+                                .font(.system(size: 9.5, weight: .medium))
                             Spacer()
                             Button("Enable") { state.requestAccessibility() }
                                 .font(.system(size: 9, weight: .semibold))
@@ -2392,23 +2795,25 @@ struct MenuBarControlCenterView: View {
                 .cornerRadius(6)
             }
 
-            // Tactile Microphone Orb (Frosted Glass)
-            VStack(spacing: 5) {
+            Spacer(minLength: 0)
+
+            // Tactile Center Orb
+            VStack(spacing: 6) {
                 Button(action: { HotkeyManager.shared.toggleRecording() }) {
                     ZStack {
                         Circle()
-                            .fill(state.isRecording ? Color(red: 0.82, green: 0.28, blue: 0.32) : Color.primary.opacity(0.08))
-                            .frame(width: 46, height: 46)
+                            .fill(state.isRecording ? Color(red: 0.85, green: 0.25, blue: 0.3) : Color.primary.opacity(0.08))
+                            .frame(width: 48, height: 48)
 
                         if state.isRecording {
                             Circle()
-                                .stroke(Color(red: 0.82, green: 0.28, blue: 0.32).opacity(0.25), lineWidth: 2)
-                                .frame(width: 56, height: 56)
-                                .scaleEffect(1.0 + CGFloat(state.audioLevel) * 0.2)
+                                .stroke(Color(red: 0.85, green: 0.25, blue: 0.3).opacity(0.3), lineWidth: 2.5)
+                                .frame(width: 58, height: 58)
+                                .scaleEffect(1.0 + CGFloat(state.audioLevel) * 0.25)
                         }
 
                         Image(systemName: state.isRecording ? "stop.fill" : "mic.fill")
-                            .font(.system(size: 17, weight: .medium))
+                            .font(.system(size: 18, weight: .medium))
                             .foregroundColor(state.isRecording ? .white : .primary)
                     }
                 }
@@ -2422,12 +2827,13 @@ struct MenuBarControlCenterView: View {
                     Image(systemName: "mic.fill")
                         .font(.system(size: 8))
                     Text(state.currentMicName)
-                        .font(.system(size: 9))
+                        .font(.system(size: 8.5))
                         .lineLimit(1)
                 }
                 .foregroundColor(.secondary)
             }
-            .padding(.vertical, 1)
+
+            Spacer(minLength: 0)
 
             // Segmented Engine Switch (Local Rules vs LLM)
             VStack(spacing: 4) {
@@ -2459,7 +2865,7 @@ struct MenuBarControlCenterView: View {
                     }) {
                         HStack(spacing: 3) {
                             Image(systemName: "sparkles")
-                            Text(state.provider == "groq" ? "Groq 27B" : (state.provider == "lmstudio" ? "Bionic LLM" : "LLM Polish"))
+                            Text(state.provider == "groq" ? "Groq 27B" : "LLM Polish")
                         }
                         .font(.system(size: 9.5, weight: (state.useLlmPolish && state.provider != "local_rules") ? .semibold : .regular))
                         .lineLimit(1)
@@ -2476,39 +2882,214 @@ struct MenuBarControlCenterView: View {
                 .background(Color.primary.opacity(0.04))
                 .cornerRadius(6)
 
-                Text((!state.useLlmPolish || state.provider == "local_rules") ? "⚡ Built-in Rules: Offline, Instant 0ms (No LLM)" : "🤖 LLM Mode: \(state.provider == "groq" ? "Groq Qwen 27B" : (state.provider == "lmstudio" ? "Bionic Local" : (state.provider == "ollama" ? "Ollama Local" : "OpenRouter Cloud")))")
+                Text((!state.useLlmPolish || state.provider == "local_rules") ? "⚡ Built-in Rules: Offline, Instant" : "🤖 LLM Mode: \(state.provider == "groq" ? "Groq Qwen 27B" : "LLM Polish")")
                     .font(.system(size: 8, weight: .regular))
                     .foregroundColor(.secondary)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.85)
             }
 
-            // Shortcut Keycaps
+            // Bottom Micro Status Card
+            HStack {
+                HStack(spacing: 3) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 8))
+                        .foregroundColor(.green.opacity(0.8))
+                    Text(state.lastLatencyMs > 0 ? String(format: "%.0f ms", state.lastLatencyMs) : "Ready")
+                        .font(.system(size: 8.5, weight: .medium))
+                }
+                Spacer()
+                Text("Auto-Paste: ON")
+                    .font(.system(size: 8.5))
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color.primary.opacity(0.03))
+            .cornerRadius(5)
+        }
+    }
+}
+
+// MARK: - Tab Pane 2: Flow Mode Focus Timer
+struct FlowTabPane: View {
+    @ObservedObject var state = AppState.shared
+
+    var body: some View {
+        VStack(spacing: 11) {
+            // Header
+            HStack {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Flow Mode")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                    Text("Focus & Deep Work")
+                        .font(.system(size: 8.5))
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+                if state.isFlowActive {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(state.isFlowPaused ? Color.orange : state.hudAccentColor)
+                            .frame(width: 6, height: 6)
+                        Text(state.isFlowPaused ? "PAUSED" : "ACTIVE")
+                            .font(.system(size: 8.5, weight: .bold))
+                            .foregroundColor(state.isFlowPaused ? .orange : state.hudAccentColor)
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.primary.opacity(0.06))
+                    .cornerRadius(4)
+                }
+            }
+
+            // Big Timer Display Card
+            VStack(spacing: 5) {
+                Text(state.flowTimeString)
+                    .font(.system(size: 30, weight: .bold, design: .monospaced))
+                    .foregroundColor(state.isFlowActive ? (state.isFlowPaused ? .secondary : state.hudAccentColor) : .primary)
+
+                // Progress Bar
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(Color.primary.opacity(0.08))
+                            .frame(height: 4)
+
+                        Capsule()
+                            .fill(state.hudAccentColor)
+                            .frame(width: geo.size.width * (state.isFlowActive ? state.flowProgress : 1.0), height: 4)
+                    }
+                }
+                .frame(height: 4)
+                .padding(.horizontal, 14)
+
+                Text(state.isFlowActive ? (state.isFlowPaused ? "Paused — take a quick breath" : "Locked in. Flow state engaged.") : "Select a focus session duration:")
+                    .font(.system(size: 8.5))
+                    .foregroundColor(.secondary)
+                    .padding(.top, 2)
+            }
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity)
+            .background(Color.primary.opacity(0.035))
+            .cornerRadius(8)
+
+            // Preset Grid (2x2)
+            VStack(spacing: 5) {
+                HStack(spacing: 5) {
+                    FlowPresetButton(title: "🍅 25m Focus", minutes: 25)
+                    FlowPresetButton(title: "🌊 45m Deep Work", minutes: 45)
+                }
+                HStack(spacing: 5) {
+                    FlowPresetButton(title: "🚀 60m Flow State", minutes: 60)
+                    FlowPresetButton(title: "⚡ 15m Sprint", minutes: 15)
+                }
+            }
+
+            // Controls when Flow is active
+            if state.isFlowActive {
+                HStack(spacing: 6) {
+                    Button(action: { state.toggleFlowPause() }) {
+                        HStack(spacing: 3) {
+                            Image(systemName: state.isFlowPaused ? "play.fill" : "pause.fill")
+                            Text(state.isFlowPaused ? "Resume" : "Pause")
+                        }
+                        .font(.system(size: 9.5, weight: .medium))
+                        .padding(.vertical, 4)
+                        .frame(maxWidth: .infinity)
+                        .background(Color.primary.opacity(0.08))
+                        .cornerRadius(5)
+                    }
+                    .buttonStyle(.plain)
+
+                    Button(action: { state.addFlowMinutes(5) }) {
+                        Text("+5 min")
+                            .font(.system(size: 9.5, weight: .medium))
+                            .padding(.vertical, 4)
+                            .frame(width: 54)
+                            .background(Color.primary.opacity(0.08))
+                            .cornerRadius(5)
+                    }
+                    .buttonStyle(.plain)
+
+                    Button(action: { state.stopFlow() }) {
+                        Text("Reset")
+                            .font(.system(size: 9.5, weight: .medium))
+                            .foregroundColor(.red.opacity(0.9))
+                            .padding(.vertical, 4)
+                            .frame(width: 48)
+                            .background(Color.red.opacity(0.12))
+                            .cornerRadius(5)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            Spacer(minLength: 0)
+
+            // Pro Tip
+            HStack(spacing: 4) {
+                Image(systemName: "hand.tap.fill")
+                    .font(.system(size: 8))
+                Text("Right-click desktop mascot anytime to start Flow")
+                    .font(.system(size: 8))
+            }
+            .foregroundColor(.secondary.opacity(0.8))
+        }
+    }
+}
+
+struct FlowPresetButton: View {
+    let title: String
+    let minutes: Int
+    @ObservedObject var state = AppState.shared
+
+    var isCurrentTarget: Bool {
+        state.isFlowActive && state.flowTotalSeconds == minutes * 60
+    }
+
+    var body: some View {
+        Button(action: {
+            state.startFlow(minutes: minutes)
+        }) {
+            Text(title)
+                .font(.system(size: 9, weight: isCurrentTarget ? .semibold : .regular))
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .padding(.vertical, 5)
+                .frame(maxWidth: .infinity)
+                .background(isCurrentTarget ? state.hudAccentColor.opacity(0.2) : Color.primary.opacity(0.05))
+                .foregroundColor(isCurrentTarget ? state.hudAccentColor : .primary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 5)
+                        .stroke(isCurrentTarget ? state.hudAccentColor.opacity(0.5) : Color.clear, lineWidth: 1)
+                )
+                .cornerRadius(5)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Tab Pane 3: Desktop Companion & Aesthetics
+struct CompanionTabPane: View {
+    @ObservedObject var state = AppState.shared
+
+    var body: some View {
+        VStack(spacing: 10) {
+            // Header
+            HStack {
+                Text("Companion")
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                Spacer()
+                Text(mascotDisplayName(state.hudCharacter))
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(state.hudAccentColor)
+            }
+
+            // Mascot Picker
             VStack(alignment: .leading, spacing: 3) {
-                Text("Shortcut:")
+                Text("Mascot Character:")
                     .font(.system(size: 9, weight: .medium))
                     .foregroundColor(.secondary)
-
-                HStack(spacing: 4) {
-                    ShortcutChip(id: "opt_space", label: "⌥ Space")
-                    ShortcutChip(id: "f8", label: "F8")
-                    ShortcutChip(id: "ctrl_space", label: "⌃ Space")
-                    ShortcutChip(id: "cmd_shift_d", label: "⌘⇧D")
-                    ShortcutChip(id: "hold_option", label: "Hold ⌥")
-                }
-            }
-
-            // Companion Mascot Picker
-            VStack(alignment: .leading, spacing: 3) {
-                HStack {
-                    Text("Companion Mascot:")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(.secondary)
-                    Spacer()
-                    Text(mascotDisplayName(state.hudCharacter))
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(.primary.opacity(0.85))
-                }
 
                 HStack(spacing: 4) {
                     MascotChip(id: "gearbot", icon: "🤖", label: "Gear")
@@ -2525,9 +3106,9 @@ struct MenuBarControlCenterView: View {
                         .font(.system(size: 9, weight: .medium))
                         .foregroundColor(.secondary)
                     Spacer()
-                    Text(state.listeningStyle == "morph" ? "Morph to Bar" : (state.listeningStyle == "character" ? "Character Aura" : "Waveform Only"))
-                        .font(.system(size: 8.5, weight: .semibold))
-                        .foregroundColor(.primary.opacity(0.85))
+                    Text(state.listeningStyle == "morph" ? "Morph to Bar" : (state.listeningStyle == "character" ? "Aura Only" : "Wave Only"))
+                        .font(.system(size: 8))
+                        .foregroundColor(.secondary)
                 }
 
                 HStack(spacing: 4) {
@@ -2537,15 +3118,30 @@ struct MenuBarControlCenterView: View {
                 }
             }
 
-            // Always on Desktop Toggle
+            // Accent Color Swatches
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Accent Color:")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(.secondary)
+
+                HStack(spacing: 7) {
+                    AccentColorDot(id: "amber", color: Color(red: 0.961, green: 0.620, blue: 0.043))
+                    AccentColorDot(id: "rose", color: Color(red: 0.957, green: 0.247, blue: 0.369))
+                    AccentColorDot(id: "emerald", color: Color(red: 0.063, green: 0.725, blue: 0.506))
+                    AccentColorDot(id: "cyan", color: Color(red: 0.024, green: 0.714, blue: 0.831))
+                    AccentColorDot(id: "purple", color: Color(red: 0.545, green: 0.361, blue: 0.965))
+                    AccentColorDot(id: "monochrome", color: Color(white: 0.92))
+                }
+            }
+
+            Divider().opacity(0.12)
+
+            // Desktop Pet Toggle
             HStack {
-                HStack(spacing: 5) {
-                    Image(systemName: state.alwaysShowCompanion ? "sparkles" : "eye.slash")
-                        .font(.system(size: 9.5))
-                        .foregroundColor(state.alwaysShowCompanion ? state.hudAccentColor : .secondary)
+                VStack(alignment: .leading, spacing: 1) {
                     Text("Always on Desktop")
                         .font(.system(size: 9.5, weight: .medium))
-                    Text("(Pet)")
+                    Text("Keep mascot floating next to Dock")
                         .font(.system(size: 8))
                         .foregroundColor(.secondary)
                 }
@@ -2557,13 +3153,82 @@ struct MenuBarControlCenterView: View {
                         state.saveConfigToDisk()
                         if enabled {
                             FloatingHUDController.shared.show()
-                        } else if !state.isRecording && !state.isProcessing {
+                        } else if !state.isRecording && !state.isProcessing && !state.isFlowActive {
                             FloatingHUDController.shared.hide()
                         }
                     }
             }
+        }
+    }
 
-            // Position & Dock Snapping
+    private func mascotDisplayName(_ id: String) -> String {
+        switch id.lowercased() {
+        case "birb", "parakeet": return "🦜 Birb"
+        case "neko", "cat": return "🐱 Neko"
+        case "orb_gears", "orb", "gears": return "⚙️ Tourbillon Orb"
+        default: return "🤖 GearBot"
+        }
+    }
+}
+
+struct AccentColorDot: View {
+    let id: String
+    let color: Color
+    @ObservedObject var state = AppState.shared
+
+    var isSelected: Bool { state.hudColor == id }
+
+    var body: some View {
+        Button(action: {
+            state.hudColor = id
+            state.saveConfigToDisk()
+        }) {
+            ZStack {
+                Circle()
+                    .fill(color)
+                    .frame(width: 18, height: 18)
+
+                if isSelected {
+                    Circle()
+                        .stroke(Color.white, lineWidth: 2)
+                        .frame(width: 22, height: 22)
+                }
+            }
+            .frame(width: 24, height: 24)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Tab Pane 4: Settings & Preferences
+struct SettingsTabPane: View {
+    @ObservedObject var state = AppState.shared
+
+    var body: some View {
+        VStack(spacing: 9) {
+            // Header
+            HStack {
+                Text("Preferences")
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                Spacer()
+            }
+
+            // Shortcuts
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Shortcut:")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(.secondary)
+
+                HStack(spacing: 3) {
+                    ShortcutChip(id: "opt_space", label: "⌥ Space")
+                    ShortcutChip(id: "f8", label: "F8")
+                    ShortcutChip(id: "ctrl_space", label: "⌃ Space")
+                    ShortcutChip(id: "cmd_shift_d", label: "⌘⇧D")
+                    ShortcutChip(id: "hold_option", label: "Hold ⌥")
+                }
+            }
+
+            // Dock Position & Nudge
             VStack(alignment: .leading, spacing: 3) {
                 HStack {
                     Text("Dock & Position:")
@@ -2571,8 +3236,8 @@ struct MenuBarControlCenterView: View {
                         .foregroundColor(.secondary)
                     Spacer()
                     Text(positionDisplayName(state.hudPosition, offset: state.hudYOffset))
-                        .font(.system(size: 8.5, weight: .semibold))
-                        .foregroundColor(.primary.opacity(0.85))
+                        .font(.system(size: 8))
+                        .foregroundColor(.secondary)
                 }
 
                 HStack(spacing: 4) {
@@ -2593,12 +3258,12 @@ struct MenuBarControlCenterView: View {
                     }) {
                         HStack(spacing: 2) {
                             Image(systemName: "arrow.down")
-                                .font(.system(size: 7.5))
+                                .font(.system(size: 7))
                             Text("Lower")
                                 .font(.system(size: 8.5))
                         }
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2.5)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
                         .background(Color.primary.opacity(0.06))
                         .cornerRadius(4)
                     }
@@ -2611,12 +3276,12 @@ struct MenuBarControlCenterView: View {
                     }) {
                         HStack(spacing: 2) {
                             Image(systemName: "arrow.up")
-                                .font(.system(size: 7.5))
+                                .font(.system(size: 7))
                             Text("Raise")
                                 .font(.system(size: 8.5))
                         }
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2.5)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
                         .background(Color.primary.opacity(0.06))
                         .cornerRadius(4)
                     }
@@ -2625,104 +3290,59 @@ struct MenuBarControlCenterView: View {
                     Spacer()
 
                     Text("\(Int(state.hudYOffset)) px")
-                        .font(.system(size: 8.5, weight: .medium, design: .monospaced))
+                        .font(.system(size: 8, weight: .medium, design: .monospaced))
                         .foregroundColor(.secondary)
                 }
-                .padding(.top, 1)
-
-                Text("💡 Middle bottom with smooth automatic Dock tracking & pet interactions")
-                    .font(.system(size: 7.5))
-                    .foregroundColor(.secondary.opacity(0.75))
             }
 
-            // Dedicated Web Dashboard & Settings Button (Opens full browser UI)
+            // Web Dashboard Link
             Button(action: {
                 if let url = URL(string: "http://127.0.0.1:18765/history#settings") {
                     NSWorkspace.shared.open(url)
                 }
             }) {
-                HStack(spacing: 6) {
+                HStack(spacing: 5) {
                     Image(systemName: "slider.horizontal.3")
-                        .font(.system(size: 11))
-                    Text("Dashboard & Settings")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 10))
+                    Text("Web Dashboard & Advanced Settings")
+                        .font(.system(size: 9.5, weight: .medium))
                     Spacer()
                     Image(systemName: "arrow.up.right")
-                        .font(.system(size: 9))
+                        .font(.system(size: 8))
                 }
                 .foregroundColor(.primary.opacity(0.9))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
                 .background(Color.primary.opacity(0.06))
-                .cornerRadius(6)
+                .cornerRadius(5)
             }
             .buttonStyle(.plain)
 
-            Divider().opacity(0.15)
+            Spacer(minLength: 0)
+            Divider().opacity(0.12)
 
-            // Minimal Footer with Restart & Quit
+            // Footer
             HStack {
                 Button(action: { restartAppAndDaemon() }) {
                     HStack(spacing: 3) {
                         Image(systemName: "arrow.clockwise")
                             .font(.system(size: 8))
-                        Text("Restart")
+                        Text("Restart Velox")
                     }
-                    .font(.system(size: 9.5, weight: .medium))
+                    .font(.system(size: 9, weight: .medium))
                     .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
 
                 Spacer()
 
-                if state.isAccessibilityGranted {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(Color.green.opacity(0.8))
-                            .frame(width: 5, height: 5)
-                        Text("Ready")
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundColor(.secondary)
-                    }
-                } else {
-                    Button(action: { state.requestAccessibility() }) {
-                        Text("Enable Paste")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundColor(Color(red: 0.88, green: 0.52, blue: 0.2))
-                    }
-                    .buttonStyle(.plain)
-                }
-
-                Spacer()
-
                 Button(action: { NSApp.terminate(nil) }) {
-                    Text("Quit")
-                        .font(.system(size: 9.5, weight: .regular))
+                    Text("Quit Velox")
+                        .font(.system(size: 9, weight: .regular))
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
             }
-            .padding(.top, 1)
-        }
-        .padding(.horizontal, 13)
-        .padding(.top, 11)
-        .padding(.bottom, 12)
-        .frame(width: 275)
-        .onAppear {
-            state.loadConfigFromDisk()
-            state.refreshPermissions()
-        }
-        .onReceive(pollTimer) { _ in
-            state.refreshPermissions()
-        }
-    }
-
-    private func mascotDisplayName(_ id: String) -> String {
-        switch id.lowercased() {
-        case "birb", "parakeet": return "🦜 Birb"
-        case "neko", "cat": return "🐱 Neko"
-        case "orb_gears", "orb", "gears": return "⚙️ Tourbillon Orb"
-        default: return "🤖 GearBot"
         }
     }
 
@@ -2906,7 +3526,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let p = NSPopover()
-        p.contentSize = NSSize(width: 275, height: 430)
+        p.contentSize = NSSize(width: 350, height: 330)
         p.behavior = .transient
         p.contentViewController = NSHostingController(rootView: MenuBarControlCenterView())
         self.popover = p
