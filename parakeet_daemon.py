@@ -51,7 +51,7 @@ DEFAULT_CONFIG = {
     "custom_vocab": "how far, abeg, naira, GitHub, PR, Velox",
     "hud_position": "bottom_center",  # "left", "bottom_center", "right"
     "hud_size": "compact",     # "mini", "compact", "spacious"
-    "hud_character": "gearbot", # "gearbot", "birb", "neko", "orb_gears", "custom"
+    "hud_character": "gearbot", # "gearbot", "neko", "luna", "kuro", "custom"
     "hud_color": "amber",      # "amber", "rose", "emerald", "cyan", "purple", "monochrome"
     "hud_listening_style": "morph", # "morph", "character", "waveform"
 }
@@ -1970,10 +1970,10 @@ def render_history_html() -> str:
     <div class="form-group">
         <label class="form-label">Animated Companion Character</label>
         <select class="form-select" id="cfg-hud-char" onchange="renderHudPreview()">
-            <option value="gearbot" {"selected" if config.get('hud_character', 'gearbot') == 'gearbot' else ""}>🤖 GearBot (Cyber Mascot with Spinning Cogs)</option>
-            <option value="birb" {"selected" if config.get('hud_character') == 'birb' else ""}>🦜 Birb (Velox Parakeet with Audio-Reactive Beak)</option>
-            <option value="neko" {"selected" if config.get('hud_character') == 'neko' else ""}>🐱 Neko (Cozy Glass Cat Companion)</option>
-            <option value="orb_gears" {"selected" if config.get('hud_character') == 'orb_gears' else ""}>⚙️ Horology Orb (Precision Tourbillon Gears)</option>
+            <option value="gearbot" {"selected" if config.get('hud_character', 'gearbot') == 'gearbot' else ""}>🤖 GearBot (Curious Cyber Inventor)</option>
+            <option value="neko" {"selected" if config.get('hud_character') == 'neko' else ""}>🐱 Neko (Cozy Cat Companion)</option>
+            <option value="luna" {"selected" if config.get('hud_character') == 'luna' else ""}>👻 Luna (Gentle Celestial Spirit)</option>
+            <option value="kuro" {"selected" if config.get('hud_character') == 'kuro' else ""}>🦊 Kuro (Clever Shadow Fox)</option>
             <option value="custom" {"selected" if config.get('hud_character') == 'custom' else ""}>📁 Custom GIF (~/.parakeetflow/character.gif)</option>
         </select>
         <div style="font-size: 11px; color: #94a3b8; margin-top: 4px;">
@@ -2239,12 +2239,12 @@ function renderHudPreview() {{
     const accent = colorMap[colorKey] || '#f59e0b';
 
     let charSvg = '';
-    if (charType === 'birb') {{
-        charSvg = '<svg width=\"17\" height=\"17\" viewBox=\"0 0 24 24\"><circle cx=\"12\" cy=\"12\" r=\"9\" fill=\"' + accent + '\" opacity=\"0.9\"/><circle cx=\"15\" cy=\"10\" r=\"2.2\" fill=\"#000\"/><circle cx=\"15.8\" cy=\"9.2\" r=\"0.7\" fill=\"#fff\"/><polygon points=\"19,10 24,12 19,14\" fill=\"#fbbf24\"/></svg>';
+    if (charType === 'luna') {{
+        charSvg = '<svg width=\"17\" height=\"17\" viewBox=\"0 0 24 24\"><circle cx=\"12\" cy=\"4\" r=\"2\" fill=\"' + accent + '\" opacity=\"0.9\"/><rect x=\"4\" y=\"8\" width=\"16\" height=\"14\" rx=\"7\" fill=\"' + accent + '\" opacity=\"0.85\"/><circle cx=\"9\" cy=\"13\" r=\"1.8\" fill=\"#fff\"/><circle cx=\"15\" cy=\"13\" r=\"1.8\" fill=\"#fff\"/></svg>';
     }} else if (charType === 'neko') {{
         charSvg = '<svg width=\"17\" height=\"17\" viewBox=\"0 0 24 24\"><polygon points=\"6,9 9,3 12,9\" fill=\"' + accent + '\"/><polygon points=\"12,9 15,3 18,9\" fill=\"' + accent + '\"/><circle cx=\"12\" cy=\"13\" r=\"8\" fill=\"#1e1e24\"/><circle cx=\"9.5\" cy=\"12.5\" r=\"1.8\" fill=\"' + accent + '\"/><circle cx=\"14.5\" cy=\"12.5\" r=\"1.8\" fill=\"' + accent + '\"/></svg>';
-    }} else if (charType === 'orb_gears') {{
-        charSvg = '<svg width=\"17\" height=\"17\" viewBox=\"0 0 24 24\"><circle cx=\"12\" cy=\"12\" r=\"10\" fill=\"rgba(255,255,255,0.06)\" stroke=\"rgba(255,255,255,0.3)\" stroke-width=\"0.8\"/><circle cx=\"12\" cy=\"12\" r=\"6\" stroke=\"' + accent + '\" stroke-width=\"2\" stroke-dasharray=\"3 2\" fill=\"none\"/></svg>';
+    }} else if (charType === 'kuro') {{
+        charSvg = '<svg width=\"17\" height=\"17\" viewBox=\"0 0 24 24\"><polygon points=\"5,9 8,2 11,9\" fill=\"#2d3748\"/><polygon points=\"13,9 16,2 19,9\" fill=\"#2d3748\"/><polygon points=\"7,8 8,4 10,8\" fill=\"' + accent + '\"/><polygon points=\"14,8 16,4 17,8\" fill=\"' + accent + '\"/><circle cx=\"12\" cy=\"13\" r=\"8\" fill=\"#1e1e24\"/><circle cx=\"9.5\" cy=\"12.5\" r=\"1.8\" fill=\"' + accent + '\"/><circle cx=\"14.5\" cy=\"12.5\" r=\"1.8\" fill=\"' + accent + '\"/></svg>';
     }} else {{
         charSvg = '<svg width=\"17\" height=\"17\" viewBox=\"0 0 24 24\"><circle cx=\"12\" cy=\"4\" r=\"2\" fill=\"' + accent + '\"/><rect x=\"3\" y=\"8\" width=\"18\" height=\"13\" rx=\"4\" fill=\"#1e1e24\" stroke=\"rgba(255,255,255,0.25)\" stroke-width=\"0.8\"/><rect x=\"5\" y=\"10\" width=\"14\" height=\"9\" rx=\"2.5\" fill=\"#000\"/><circle cx=\"8.5\" cy=\"14.5\" r=\"2\" fill=\"' + accent + '\"/><circle cx=\"15.5\" cy=\"14.5\" r=\"2\" fill=\"' + accent + '\"/></svg>';
     }}

@@ -81,12 +81,14 @@ Press **⌥ Space** anywhere on your Mac. Speak. Velox transcribes your speech u
 - Tactile frosted microphone orb with live reactive audio pulse
 - Fast toggle between 0ms offline rules and cloud LLM polish
 
-### 🤖 Desktop Pet Companion
-- A floating animated character (Gearbot, Birb, Neko, or Orb) lives on your desktop
-- Reacts to hover and clicks with cute animations
-- Morphing voice waveform animation during dictation
-- Snaps to left, center, or right of screen with smooth dock-aware positioning
-- 6 vibrant accent color themes (Amber, Rose, Emerald, Cyan, Purple, Monochrome)
+### 🤖 Desktop Pet Companion & Interactive Mascots
+- **4 Expressive Characters**: **GearBot** (Curious Cyber Inventor), **Neko** (Cozy Cat Companion), **Luna** (Gentle Celestial Spirit), and **Kuro** (Clever Shadow Fox)
+- **Live Cursor Tracking**: Smoothly looks left-to-right following your cursor when nearby — zero polling, zero mouse lag, and zero battery drain (passive ~35Hz event monitor)
+- **Interactive Typing Side-Eye**: Notices when you're typing in any application and casts a hilarious skeptical side-eye glance with tilted ears and cocked head
+- **Tactile Click Reactions**: Tap or click for playful bounce animations, heart bursts, and sound effects
+- **Morphing Waveform**: Morphs seamlessly into a voice equalizing harmonic bar while listening
+- **Dock & Edge Snapping**: Snaps to bottom-center (dock-aware) or screen edges with fluid glide
+- **6 Accent Colors**: Amber, Rose, Emerald, Cyan, Purple, and Monochrome
 
 ### 🎛️ Web Dashboard
 - Beautiful dark-mode dashboard at `http://localhost:18765`
@@ -245,7 +247,7 @@ All settings are stored in `~/.parakeetflow/config.json`:
   // Floating HUD
   "hud_position": "bottom_center", // "left", "bottom_center", "right"
   "hud_size": "compact",           // "mini", "compact", "spacious"
-  "hud_character": "gearbot",      // "gearbot", "birb", "neko", "orb_gears"
+  "hud_character": "gearbot",      // "gearbot", "neko", "luna", "kuro"
   "hud_color": "amber",            // "amber", "rose", "emerald", "cyan", "purple", "monochrome"
   "hud_always_show": true           // Desktop pet companion mode
 }

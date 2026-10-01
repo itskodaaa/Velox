@@ -133,7 +133,7 @@ final class AppState: ObservableObject {
     // HUD Customization
     @AppStorage("hud_position") var hudPosition: String = "bottom_center" // "bottom_left", "bottom_center", "bottom_right"
     @AppStorage("hud_size") var hudSize: String = "compact"         // "mini", "compact", "spacious"
-    @AppStorage("hud_character") var hudCharacter: String = "gearbot" // "gearbot", "birb", "neko", "orb_gears", "custom"
+    @AppStorage("hud_character") var hudCharacter: String = "gearbot" // "gearbot", "neko", "luna", "kuro", "custom"
     @AppStorage("hud_color") var hudColor: String = "amber"         // "amber", "rose", "emerald", "cyan", "purple", "monochrome"
     @AppStorage("hud_always_show") var alwaysShowCompanion: Bool = true // Desktop pet companion mode
     @AppStorage("hud_y_offset") var hudYOffset: Double = 0.0        // User nudge from dock/bottom
@@ -143,6 +143,13 @@ final class AppState: ObservableObject {
     @Published var isPetHappy: Bool = false
     @Published var petClickCount: Int = 0
     @Published var petReactionEmoji: String = "💖"
+
+    // Live Cursor & Keyboard Interactivity (Fluid Look-At & Typing Side-Eye)
+    @Published var cursorLookX: Double = 0.0 // -1.0 (left) ... +1.0 (right)
+    @Published var cursorLookY: Double = 0.0 // -1.0 (down) ... +1.0 (up)
+    @Published var isCursorNear: Bool = false
+    @Published var isUserTyping: Bool = false
+    @Published var typingSpeedBurst: Bool = false
 
     var hudWidth: CGFloat {
         switch hudSize {
@@ -204,7 +211,15 @@ final class AppState: ObservableObject {
             }
         }
         if let hsize = json["hud_size"] as? String, !hsize.isEmpty { self.hudSize = hsize }
-        if let hchar = json["hud_character"] as? String, !hchar.isEmpty { self.hudCharacter = hchar }
+        if let hchar = json["hud_character"] as? String, !hchar.isEmpty {
+            if hchar == "birb" || hchar == "parakeet" {
+                self.hudCharacter = "luna"
+            } else if hchar == "orb_gears" || hchar == "orb" {
+                self.hudCharacter = "kuro"
+            } else {
+                self.hudCharacter = hchar
+            }
+        }
         if let hcol = json["hud_color"] as? String, !hcol.isEmpty { self.hudColor = hcol }
         if let halways = json["hud_always_show"] as? Bool { self.alwaysShowCompanion = halways }
         if let hyoff = json["hud_y_offset"] as? Double { self.hudYOffset = hyoff }
@@ -280,6 +295,9 @@ final class AppState: ObservableObject {
         let micName = AVCaptureDevice.default(for: .audio)?.localizedName ?? "Default Microphone"
         if self.currentMicName != micName {
             self.currentMicName = micName
+        }
+        if trusted {
+            CompanionTrackerManager.shared.start()
         }
     }
 
@@ -943,7 +961,7 @@ struct InterlockingGearsView: View {
     }
 }
 
-// MARK: - 1. GearBot Character (Cyber Mascot with Thinking Gears)
+// MARK: - 1. GearBot Character (Curious Cyber Inventor)
 struct GearBotCharacterView: View {
     let time: Double
     let isRecording: Bool
@@ -953,54 +971,55 @@ struct GearBotCharacterView: View {
     let accentColor: Color
     var isHovered: Bool = false
     var isHappy: Bool = false
+    var cursorLookX: Double = 0.0
+    var cursorLookY: Double = 0.0
+    var isCursorNear: Bool = false
+    var isTyping: Bool = false
+    var typingBurst: Bool = false
 
     var body: some View {
         let isIdle = !isRecording && !isProcessing && !isDone
-        // 18-second life cycle for idle companion behaviors
         let cycle = isIdle ? time.truncatingRemainder(dividingBy: 18.0) : 0.0
 
-        // Head tilt:
+        // Head tilt: reacts to typing (side-eye), cursor proximity, or idle
         let headTilt: Double = {
             if isHappy {
-                return sin(time * 18.0) * 5.5 // Playful excited waggle!
+                return sin(time * 18.0) * 5.5
+            } else if isTyping {
+                return -7.5 // Curious skeptical side-eye tilt when user is typing!
+            } else if isCursorNear {
+                return cursorLookX * 6.5 // Head tracks cursor horizontally!
             } else if isProcessing {
                 return sin(time * 3.5) * 5.0
             } else if isRecording {
                 return Double(audioLevel) * 7.0 - 3.5
             } else if isHovered {
-                return 4.0 // Curious perk-up tilt when you hover
+                return 4.0
             } else {
-                // Idle curious glances:
                 if cycle >= 5.5 && cycle < 8.5 {
-                    return 8.0 // Inquisitive tilt to the right
+                    return 7.0
                 } else if cycle >= 8.5 && cycle < 12.0 {
-                    return -6.5 // Tilt to the left, watching user
+                    return -6.0
                 } else {
-                    return sin(time * 0.9) * 1.5 // Gentle resting micro-sway
+                    return sin(time * 0.9) * 1.5
                 }
             }
         }()
 
-        // Head bob:
+        // Head bob / vertical perk
         let headBob: CGFloat = {
             if isHappy {
-                // Excited bounce/hop!
                 return -3.5 + CGFloat(abs(sin(time * 14.0))) * -2.0
+            } else if isTyping {
+                return -1.5 + (typingBurst ? CGFloat(abs(sin(time * 20.0))) * -1.0 : 0)
+            } else if isCursorNear {
+                return CGFloat(-cursorLookY * 1.5) // Perks up when cursor is high!
             } else if isRecording {
                 return -CGFloat(audioLevel) * 2.5
-            } else if isProcessing {
-                return 0.0
             } else if isHovered {
-                return -1.6 // Perks up on hover
+                return -1.6
             } else {
-                // Idle perk-up: pops up head as if noticing what you're doing!
-                if cycle >= 5.2 && cycle < 7.0 {
-                    return -2.2 // Pops up!
-                } else if cycle >= 7.0 && cycle < 11.5 {
-                    return -1.2 // Stays perched up watching
-                } else {
-                    return CGFloat(sin(time * 1.8) * 0.5) // Gentle breathing float
-                }
+                return CGFloat(sin(time * 1.8) * 0.5)
             }
         }()
 
@@ -1008,27 +1027,33 @@ struct GearBotCharacterView: View {
         let (eyeOffsetX, eyeOffsetY): (CGFloat, CGFloat) = {
             if isHappy {
                 return (0.0, 0.0)
+            } else if isTyping {
+                // HARD SIDE-EYE: glances up-left toward keyboard/screen!
+                return (-1.8, 0.8)
+            } else if isCursorNear {
+                // Fluid cursor tracking!
+                return (CGFloat(cursorLookX * 1.6), CGFloat(-cursorLookY * 1.0))
             } else if isHovered {
-                return (0.0, -0.6) // Looking slightly up towards your cursor
+                return (0.0, -0.6)
             } else if isIdle {
                 if cycle >= 5.5 && cycle < 8.5 {
-                    return (1.2, -0.8) // Looking up-right toward your screen work
+                    return (1.2, -0.8)
                 } else if cycle >= 8.5 && cycle < 12.0 {
-                    return (-1.2, -0.8) // Looking up-left
-                } else if cycle >= 14.5 && cycle < 16.0 {
-                    return (0.0, 0.6) // Looking slightly down thoughtfully
+                    return (-1.2, -0.8)
                 }
             }
             return (0.0, 0.0)
         }()
 
-        // Antenna bulb illumination:
-        let antennaBulbLit = isRecording || isProcessing || isHovered || isHappy || (isIdle && cycle >= 5.2 && cycle < 12.0)
+        // Antenna bulb illumination & frequency:
+        let antennaBulbLit = isRecording || isProcessing || isHovered || isHappy || isTyping || isCursorNear
+        let antennaSpeed = isTyping ? 32.0 : 20.0
 
         // Blinking:
         let blinkPhase = sin(time * 1.7)
-        let isBlinking = (blinkPhase > 0.96 || (isIdle && cycle >= 12.0 && cycle < 12.35)) && !isProcessing && !isDone && !isHappy
-        let eyeScaleY: CGFloat = isBlinking ? 0.15 : (isHovered ? 1.15 : 1.0)
+        let isBlinking = (blinkPhase > 0.96) && !isProcessing && !isDone && !isHappy && !isTyping
+        let leftEyeScaleY: CGFloat = isBlinking ? 0.15 : (isTyping ? 1.15 : 1.0)
+        let rightEyeScaleY: CGFloat = isBlinking ? 0.15 : (isTyping ? 0.35 : 1.0) // Skeptical narrow right eye during side-eye!
 
         VStack(spacing: 0) {
             if isProcessing {
@@ -1040,13 +1065,12 @@ struct GearBotCharacterView: View {
                     Circle()
                         .fill(antennaBulbLit ? accentColor : Color.white.opacity(0.8))
                         .frame(width: 3.5, height: 3.5)
-                        .scaleEffect(isHappy ? (1.3 + sin(time * 24.0) * 0.2) : (antennaBulbLit ? 1.25 : 1.0))
+                        .scaleEffect(isHappy || isTyping ? (1.25 + sin(time * antennaSpeed) * 0.2) : (antennaBulbLit ? 1.2 : 1.0))
                         .shadow(color: accentColor.opacity(antennaBulbLit ? 0.9 : 0.2), radius: antennaBulbLit ? 3.0 : 1)
-                        .animation(.easeInOut(duration: 0.24), value: isRecording)
-                        .animation(.easeInOut(duration: 0.20), value: isHovered)
                     Rectangle()
                         .fill(Color.white.opacity(0.4))
                         .frame(width: 1.5, height: 3.5)
+                        .rotationEffect(.degrees(isCursorNear ? cursorLookX * 12.0 : 0))
                 }
                 .offset(y: 1)
             }
@@ -1076,21 +1100,12 @@ struct GearBotCharacterView: View {
                 RoundedRectangle(cornerRadius: 4)
                     .fill(Color.black.opacity(0.85))
                     .frame(width: 18, height: 13)
-                    .overlay(
-                        LinearGradient(
-                            colors: [Color.white.opacity(0.22), Color.clear],
-                            startPoint: .topLeading,
-                            endPoint: .center
-                        )
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                    )
 
                 if isDone {
                     Image(systemName: "checkmark")
                         .font(.system(size: 8, weight: .black))
                         .foregroundColor(accentColor)
                 } else if isHappy {
-                    // Kawaii smiling crescent eyes ^ ^ with blushing pink cheeks!
                     HStack(spacing: 2.8) {
                         Text("^")
                             .font(.system(size: 8.5, weight: .black, design: .rounded))
@@ -1104,7 +1119,6 @@ struct GearBotCharacterView: View {
                             .foregroundColor(accentColor)
                             .offset(y: 1)
                     }
-                    .transition(.scale.combined(with: .opacity))
                 } else if isProcessing {
                     HStack(spacing: 3.5) {
                         GearShape(teeth: 6, innerRadiusRatio: 0.5, centerHoleRatio: 0.2)
@@ -1118,168 +1132,51 @@ struct GearBotCharacterView: View {
                     }
                 } else {
                     HStack(spacing: 4) {
+                        // Left Eye
                         ZStack {
                             Capsule()
                                 .fill(isRecording || antennaBulbLit ? accentColor : Color.white.opacity(0.85))
-                                .frame(width: 3.0, height: isHovered ? 5.5 : 5.0)
-                                .scaleEffect(y: eyeScaleY)
+                                .frame(width: 3.0, height: 5.0)
+                                .scaleEffect(y: leftEyeScaleY)
                                 .offset(x: eyeOffsetX, y: eyeOffsetY)
-                                .shadow(color: accentColor.opacity(isRecording || antennaBulbLit ? 0.9 : 0.2), radius: 2.5)
+                                .shadow(color: accentColor.opacity(antennaBulbLit ? 0.9 : 0.2), radius: 2.5)
 
-                            if isHovered && !isBlinking {
+                            if (isCursorNear || isHovered) && !isBlinking && !isTyping {
                                 Circle()
                                     .fill(Color.white.opacity(0.95))
                                     .frame(width: 1.1, height: 1.1)
-                                    .offset(x: -0.6 + eyeOffsetX, y: -1.2 + eyeOffsetY)
+                                    .offset(x: eyeOffsetX - 0.5, y: eyeOffsetY - 1.0)
                             }
                         }
 
+                        // Right Eye
                         ZStack {
                             Capsule()
                                 .fill(isRecording || antennaBulbLit ? accentColor : Color.white.opacity(0.85))
-                                .frame(width: 3.0, height: isHovered ? 5.5 : 5.0)
-                                .scaleEffect(y: eyeScaleY)
+                                .frame(width: 3.0, height: 5.0)
+                                .scaleEffect(y: rightEyeScaleY)
                                 .offset(x: eyeOffsetX, y: eyeOffsetY)
-                                .shadow(color: accentColor.opacity(isRecording || antennaBulbLit ? 0.9 : 0.2), radius: 2.5)
+                                .shadow(color: accentColor.opacity(antennaBulbLit ? 0.9 : 0.2), radius: 2.5)
 
-                            if isHovered && !isBlinking {
+                            if (isCursorNear || isHovered) && !isBlinking && !isTyping {
                                 Circle()
                                     .fill(Color.white.opacity(0.95))
                                     .frame(width: 1.1, height: 1.1)
-                                    .offset(x: -0.6 + eyeOffsetX, y: -1.2 + eyeOffsetY)
+                                    .offset(x: eyeOffsetX - 0.5, y: eyeOffsetY - 1.0)
                             }
                         }
                     }
-                    .animation(.easeInOut(duration: 0.24), value: isRecording)
-                    .animation(.easeInOut(duration: 0.20), value: isHovered)
                 }
             }
         }
         .rotationEffect(.degrees(headTilt))
         .offset(y: headBob)
-        .animation(.spring(response: 0.38, dampingFraction: 0.78), value: isRecording)
-        .animation(.spring(response: 0.38, dampingFraction: 0.78), value: isProcessing)
-        .animation(.spring(response: 0.30, dampingFraction: 0.75), value: isHovered)
-        .animation(.spring(response: 0.26, dampingFraction: 0.65), value: isHappy)
+        .animation(.spring(response: 0.28, dampingFraction: 0.72), value: isTyping)
+        .animation(.spring(response: 0.26, dampingFraction: 0.75), value: isCursorNear)
     }
 }
 
-// MARK: - 2. Birb Character (Velox Parakeet with Audio-Reactive Beak)
-struct BirbCharacterView: View {
-    let time: Double
-    let isRecording: Bool
-    let isProcessing: Bool
-    let isDone: Bool
-    let audioLevel: Float
-    let accentColor: Color
-    var isHovered: Bool = false
-    var isHappy: Bool = false
-
-    var body: some View {
-        let blinkPhase = sin(time * 1.8)
-        let isBlinking = blinkPhase > 0.96 && !isProcessing && !isDone && !isHappy
-        let tilt: Double = {
-            if isHappy {
-                return sin(time * 16.0) * 6.0
-            } else if isHovered {
-                return 4.0
-            } else if isProcessing {
-                return sin(time * 3.0) * 7.0
-            } else if isRecording {
-                return Double(audioLevel) * 6.0 - 3.0
-            }
-            return 0.0
-        }()
-        let beakOpen: CGFloat = {
-            if isHappy {
-                return 1.8 + CGFloat(abs(sin(time * 12.0))) * 1.5
-            } else if isRecording {
-                return max(0.5, CGFloat(audioLevel) * 4.0)
-            }
-            return 0.5
-        }()
-        let bob: CGFloat = isHappy ? (-2.5 + CGFloat(abs(sin(time * 14.0))) * -1.5) : (isHovered ? -1.0 : 0.0)
-
-        VStack(spacing: -1) {
-            if isProcessing {
-                GearShape(teeth: 8, innerRadiusRatio: 0.6, centerHoleRatio: 0.25)
-                    .fill(accentColor)
-                    .frame(width: 13, height: 13)
-                    .rotationEffect(.degrees(time * 220.0))
-                    .shadow(color: accentColor.opacity(0.4), radius: 2)
-            } else {
-                HStack(spacing: 1.2) {
-                    Capsule()
-                        .fill(accentColor)
-                        .frame(width: 2.0, height: 4.5 + CGFloat(audioLevel) * 2.5 + (isHappy ? 1.5 : 0))
-                        .rotationEffect(.degrees(-15))
-                    Capsule()
-                        .fill(accentColor.opacity(0.9))
-                        .frame(width: 1.8, height: 6.0 + CGFloat(audioLevel) * 3.5 + (isHappy ? 2.0 : 0))
-                    Capsule()
-                        .fill(accentColor.opacity(0.75))
-                        .frame(width: 1.6, height: 4.0 + CGFloat(audioLevel) * 2.0 + (isHappy ? 1.5 : 0))
-                        .rotationEffect(.degrees(15))
-                }
-                .offset(y: 1)
-            }
-
-            HStack(spacing: -2) {
-                ZStack {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [accentColor.opacity(0.95), accentColor.opacity(0.7)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: 17, height: 17)
-                        .overlay(Circle().stroke(Color.white.opacity(0.35), lineWidth: 0.6))
-
-                    if isDone || isHappy {
-                        HStack(spacing: 2) {
-                            Text("^")
-                                .font(.system(size: 8, weight: .bold))
-                                .foregroundColor(.white)
-                            if isHappy {
-                                Circle().fill(Color.pink.opacity(0.85)).frame(width: 2, height: 1.5)
-                            }
-                        }
-                        .offset(x: 2, y: -1)
-                    } else {
-                        Circle()
-                            .fill(Color.black.opacity(0.85))
-                            .frame(width: isHovered ? 5.2 : 4.5, height: isHovered ? 5.2 : 4.5)
-                            .scaleEffect(y: isBlinking ? 0.2 : 1.0)
-                            .overlay(
-                                Circle()
-                                    .fill(Color.white)
-                                    .frame(width: isHovered ? 1.6 : 1.2, height: isHovered ? 1.6 : 1.2)
-                                    .offset(x: 1, y: -1)
-                                    .opacity(isBlinking ? 0 : 1)
-                            )
-                            .offset(x: 2, y: -1)
-                    }
-                }
-
-                Path { p in
-                    p.move(to: CGPoint(x: 0, y: 3))
-                    p.addLine(to: CGPoint(x: 4.5, y: 5.5 + beakOpen * 0.5))
-                    p.addLine(to: CGPoint(x: 0, y: 8 + beakOpen))
-                    p.closeSubpath()
-                }
-                .fill(Color(red: 0.98, green: 0.72, blue: 0.15))
-                .frame(width: 4.5, height: 9 + beakOpen)
-                .offset(y: -1)
-            }
-        }
-        .rotationEffect(.degrees(tilt))
-        .offset(y: bob)
-    }
-}
-
-// MARK: - 3. Neko Character (Glass Cat with Audio-Twitching Ears)
+// MARK: - 2. Neko Character (Sassy Feline Companion)
 struct NekoCharacterView: View {
     let time: Double
     let isRecording: Bool
@@ -1289,12 +1186,66 @@ struct NekoCharacterView: View {
     let accentColor: Color
     var isHovered: Bool = false
     var isHappy: Bool = false
+    var cursorLookX: Double = 0.0
+    var cursorLookY: Double = 0.0
+    var isCursorNear: Bool = false
+    var isTyping: Bool = false
+    var typingBurst: Bool = false
 
     var body: some View {
         let blinkPhase = sin(time * 1.6)
-        let isBlinking = blinkPhase > 0.96 && !isProcessing && !isDone && !isHappy
-        let earTwitch: Double = isHappy ? sin(time * 16.0) * 10.0 : (isRecording ? Double(audioLevel) * 7.0 : (isHovered ? 3.0 : 0.0))
-        let bob: CGFloat = isHappy ? (-2.5 + CGFloat(abs(sin(time * 14.0))) * -1.5) : (isHovered ? -1.0 : 0.0)
+        let isBlinking = blinkPhase > 0.96 && !isProcessing && !isDone && !isHappy && !isTyping
+
+        // Ear twitches:
+        let leftEarTwitch: Double = {
+            if isHappy {
+                return sin(time * 16.0) * 10.0
+            } else if isTyping {
+                return -12.0 // Sassy folded back airplane ear!
+            } else if isCursorNear {
+                return cursorLookX * 8.0 - 2.0
+            } else if isRecording {
+                return Double(audioLevel) * 9.0
+            }
+            return 0.0
+        }()
+
+        let rightEarTwitch: Double = {
+            if isHappy {
+                return -sin(time * 16.0) * 10.0
+            } else if isTyping {
+                return 15.0 // Tilted alert ear!
+            } else if isCursorNear {
+                return cursorLookX * 8.0 + 2.0
+            } else if isRecording {
+                return -Double(audioLevel) * 9.0
+            }
+            return 0.0
+        }()
+
+        let headTilt: Double = {
+            if isHappy {
+                return sin(time * 16.0) * 6.0
+            } else if isTyping {
+                return -6.5 // Judging your typing side-eye head cock!
+            } else if isCursorNear {
+                return cursorLookX * 6.0
+            }
+            return 0.0
+        }()
+
+        let bob: CGFloat = isHappy ? (-2.5 + CGFloat(abs(sin(time * 14.0))) * -1.5) : (isTyping ? -1.0 : (isHovered ? -1.0 : 0.0))
+
+        let (eyeOffsetX, eyeOffsetY): (CGFloat, CGFloat) = {
+            if isHappy {
+                return (0.0, 0.0)
+            } else if isTyping {
+                return (-1.8, 0.7) // Side-eye towards screen/keyboard!
+            } else if isCursorNear {
+                return (CGFloat(cursorLookX * 1.8), CGFloat(-cursorLookY * 1.1))
+            }
+            return (0.0, 0.0)
+        }()
 
         VStack(spacing: -3) {
             if isProcessing {
@@ -1308,9 +1259,9 @@ struct NekoCharacterView: View {
                         p.addLine(to: CGPoint(x: 6.5, y: 6.5))
                         p.closeSubpath()
                     }
-                    .fill(accentColor.opacity(0.9))
+                    .fill(accentColor.opacity(0.95))
                     .frame(width: 6.5, height: 6.5)
-                    .rotationEffect(.degrees(-earTwitch))
+                    .rotationEffect(.degrees(leftEarTwitch))
 
                     Path { p in
                         p.move(to: CGPoint(x: 0, y: 6.5))
@@ -1318,9 +1269,9 @@ struct NekoCharacterView: View {
                         p.addLine(to: CGPoint(x: 6.5, y: 6.5))
                         p.closeSubpath()
                     }
-                    .fill(accentColor.opacity(0.9))
+                    .fill(accentColor.opacity(0.95))
                     .frame(width: 6.5, height: 6.5)
-                    .rotationEffect(.degrees(earTwitch))
+                    .rotationEffect(.degrees(rightEarTwitch))
                 }
                 .offset(y: 2)
             }
@@ -1358,28 +1309,63 @@ struct NekoCharacterView: View {
                         Circle().fill(accentColor).frame(width: 2.5, height: 2.5)
                     }
                 } else {
-                    HStack(spacing: 4) {
-                        Capsule()
-                            .fill(accentColor)
-                            .frame(width: isHovered ? 3.6 : 3.2, height: isHovered ? 5.5 : 5.0)
-                            .scaleEffect(y: isBlinking ? 0.15 : (1.0 + CGFloat(audioLevel) * 0.25))
-                            .shadow(color: accentColor.opacity(0.6), radius: 2)
+                    VStack(spacing: 1) {
+                        HStack(spacing: 4) {
+                            // Left Eye
+                            ZStack {
+                                Capsule()
+                                    .fill(accentColor)
+                                    .frame(width: isCursorNear ? 3.6 : 3.2, height: isTyping ? 3.0 : (isCursorNear ? 5.6 : 5.0))
+                                    .scaleEffect(y: isBlinking ? 0.15 : (isTyping ? 0.45 : 1.0))
+                                    .offset(x: eyeOffsetX, y: eyeOffsetY)
+                                    .shadow(color: accentColor.opacity(0.6), radius: 2)
 
-                        Capsule()
-                            .fill(accentColor)
-                            .frame(width: isHovered ? 3.6 : 3.2, height: isHovered ? 5.5 : 5.0)
-                            .scaleEffect(y: isBlinking ? 0.15 : (1.0 + CGFloat(audioLevel) * 0.25))
-                            .shadow(color: accentColor.opacity(0.6), radius: 2)
+                                if isCursorNear && !isBlinking && !isTyping {
+                                    Circle()
+                                        .fill(Color.white.opacity(0.9))
+                                        .frame(width: 1.0, height: 1.0)
+                                        .offset(x: eyeOffsetX - 0.4, y: eyeOffsetY - 1.0)
+                                }
+                            }
+
+                            // Right Eye
+                            ZStack {
+                                Capsule()
+                                    .fill(accentColor)
+                                    .frame(width: isCursorNear ? 3.6 : 3.2, height: isTyping ? 3.0 : (isCursorNear ? 5.6 : 5.0))
+                                    .scaleEffect(y: isBlinking ? 0.15 : (isTyping ? 0.45 : 1.0))
+                                    .offset(x: eyeOffsetX, y: eyeOffsetY)
+                                    .shadow(color: accentColor.opacity(0.6), radius: 2)
+
+                                if isCursorNear && !isBlinking && !isTyping {
+                                    Circle()
+                                        .fill(Color.white.opacity(0.9))
+                                        .frame(width: 1.0, height: 1.0)
+                                        .offset(x: eyeOffsetX - 0.4, y: eyeOffsetY - 1.0)
+                                }
+                            }
+                        }
+
+                        if isTyping {
+                            // Sly kitty smirk: :3
+                            Text("w")
+                                .font(.system(size: 4.5, weight: .bold))
+                                .foregroundColor(accentColor.opacity(0.85))
+                                .offset(y: -1)
+                        }
                     }
                 }
             }
         }
+        .rotationEffect(.degrees(headTilt))
         .offset(y: bob)
+        .animation(.spring(response: 0.28, dampingFraction: 0.72), value: isTyping)
+        .animation(.spring(response: 0.26, dampingFraction: 0.75), value: isCursorNear)
     }
 }
 
-// MARK: - 4. OrbGears Character (Horology Tourbillon Gear Engine)
-struct OrbGearsCharacterView: View {
+// MARK: - 3. Luna Character (Gentle Celestial Spirit)
+struct LunaCharacterView: View {
     let time: Double
     let isRecording: Bool
     let isProcessing: Bool
@@ -1388,56 +1374,335 @@ struct OrbGearsCharacterView: View {
     let accentColor: Color
     var isHovered: Bool = false
     var isHappy: Bool = false
+    var cursorLookX: Double = 0.0
+    var cursorLookY: Double = 0.0
+    var isCursorNear: Bool = false
+    var isTyping: Bool = false
+    var typingBurst: Bool = false
 
     var body: some View {
-        let speed = isHappy ? 400.0 : (isProcessing ? 280.0 : (isRecording ? 60.0 + Double(audioLevel) * 160.0 : (isHovered ? 80.0 : 30.0)))
+        let blinkPhase = sin(time * 1.5)
+        let isBlinking = blinkPhase > 0.96 && !isProcessing && !isDone && !isHappy && !isTyping
 
-        ZStack {
+        // Gentle floating ethereal sway
+        let floatBob = sin(time * (isTyping ? 6.0 : 2.4)) * 1.6
+        let bodyTilt: Double = {
+            if isHappy {
+                return sin(time * 16.0) * 8.0
+            } else if isTyping {
+                return -7.0 // Shy curious tilt
+            } else if isCursorNear {
+                return cursorLookX * 7.0
+            }
+            return sin(time * 1.2) * 2.0
+        }()
+
+        let (eyeOffsetX, eyeOffsetY): (CGFloat, CGFloat) = {
+            if isHappy {
+                return (0.0, 0.0)
+            } else if isTyping {
+                return (-1.7, 0.8) // Amazed side-eye at fast typing!
+            } else if isCursorNear {
+                return (CGFloat(cursorLookX * 1.8), CGFloat(-cursorLookY * 1.1))
+            }
+            return (0.0, 0.0)
+        }()
+
+        VStack(spacing: -1) {
+            // Little floating star crown / celestial wisp on top
             Circle()
-                .fill(
-                    RadialGradient(
-                        colors: [accentColor.opacity(isHappy ? 0.4 : (isHovered ? 0.28 : 0.18)), Color.black.opacity(0.45)],
-                        center: .topLeading,
-                        startRadius: 2,
-                        endRadius: 13
-                    )
-                )
-                .frame(width: 23, height: 23)
-                .overlay(
-                    Circle()
-                        .stroke(
-                            LinearGradient(
-                                colors: [Color.white.opacity(0.55), Color.white.opacity(0.08)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 0.8
+                .fill(accentColor.opacity(0.95))
+                .frame(width: 3.2, height: 3.2)
+                .shadow(color: accentColor.opacity(0.8), radius: 2)
+                .offset(y: sin(time * 3.5) * 1.2)
+
+            ZStack {
+                // Ethereal Ghost/Wisp Body with soft gradient
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(
+                        LinearGradient(
+                            colors: [accentColor.opacity(0.85), Color(white: 0.15).opacity(0.9)],
+                            startPoint: .top,
+                            endPoint: .bottom
                         )
-                )
-
-            GearShape(teeth: 10, innerRadiusRatio: 0.72, centerHoleRatio: 0.55)
-                .stroke(Color.white.opacity(0.4), lineWidth: 1.2)
-                .frame(width: 21, height: 21)
-                .rotationEffect(.degrees(-time * speed * 0.6))
-
-            GearShape(teeth: 6, innerRadiusRatio: 0.58, centerHoleRatio: 0.25)
-                .fill(
-                    LinearGradient(
-                        colors: [accentColor, accentColor.opacity(0.8), Color.white.opacity(0.9)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
                     )
-                )
-                .frame(width: 13, height: 13)
-                .rotationEffect(.degrees(time * speed))
-                .shadow(color: accentColor.opacity(0.5), radius: 2.5)
+                    .frame(width: 18, height: 16)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.white.opacity(0.35), lineWidth: 0.7)
+                    )
+                    .shadow(color: accentColor.opacity(isHovered || isCursorNear ? 0.5 : 0.2), radius: 3)
 
-            Circle()
-                .fill(isDone || isHappy ? Color.green : Color.white)
-                .frame(width: isHappy ? 4.0 : 3.0, height: isHappy ? 4.0 : 3.0)
-                .shadow(color: Color.white.opacity(0.8), radius: 2)
+                // Face Features
+                if isDone || isHappy {
+                    HStack(spacing: 2.5) {
+                        Text("^")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundColor(.white)
+                        Circle().fill(Color.pink.opacity(0.9)).frame(width: 2.2, height: 1.6)
+                        Text("^")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundColor(.white)
+                    }
+                } else if isProcessing {
+                    HStack(spacing: 3) {
+                        Circle().fill(Color.white).frame(width: 2.5, height: 2.5)
+                            .scaleEffect(0.6 + max(0, sin(time * 6.0)) * 0.6)
+                        Circle().fill(Color.white).frame(width: 2.5, height: 2.5)
+                            .scaleEffect(0.6 + max(0, sin(time * 6.0 + 1.0)) * 0.6)
+                    }
+                } else {
+                    VStack(spacing: 0.5) {
+                        // Big starry anime wisp eyes
+                        HStack(spacing: 4) {
+                            ZStack {
+                                Capsule()
+                                    .fill(Color.black.opacity(0.88))
+                                    .frame(width: 3.6, height: 5.2)
+                                    .scaleEffect(y: isBlinking ? 0.15 : (isTyping ? 0.8 : 1.0))
+                                    .offset(x: eyeOffsetX, y: eyeOffsetY)
+
+                                if !isBlinking {
+                                    Circle()
+                                        .fill(Color.white)
+                                        .frame(width: 1.4, height: 1.4)
+                                        .offset(x: eyeOffsetX - 0.7, y: eyeOffsetY - 1.2)
+                                }
+                            }
+
+                            ZStack {
+                                Capsule()
+                                    .fill(Color.black.opacity(0.88))
+                                    .frame(width: 3.6, height: 5.2)
+                                    .scaleEffect(y: isBlinking ? 0.15 : (isTyping ? 0.8 : 1.0))
+                                    .offset(x: eyeOffsetX, y: eyeOffsetY)
+
+                                if !isBlinking {
+                                    Circle()
+                                        .fill(Color.white)
+                                        .frame(width: 1.4, height: 1.4)
+                                        .offset(x: eyeOffsetX - 0.7, y: eyeOffsetY - 1.2)
+                                }
+                            }
+                        }
+
+                        // Soft blushing cheeks
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(Color.pink.opacity(isTyping || isCursorNear ? 0.88 : 0.45))
+                                .frame(width: 2.2, height: 1.4)
+                            Circle()
+                                .fill(Color.pink.opacity(isTyping || isCursorNear ? 0.88 : 0.45))
+                                .frame(width: 2.2, height: 1.4)
+                        }
+                    }
+                }
+            }
         }
-        .scaleEffect(isHappy ? 1.12 : 1.0)
+        .rotationEffect(.degrees(bodyTilt))
+        .offset(y: CGFloat(floatBob))
+        .animation(.spring(response: 0.28, dampingFraction: 0.72), value: isTyping)
+        .animation(.spring(response: 0.26, dampingFraction: 0.75), value: isCursorNear)
+    }
+}
+
+// MARK: - 4. Kuro Character (Clever Shadow Fox)
+struct KuroCharacterView: View {
+    let time: Double
+    let isRecording: Bool
+    let isProcessing: Bool
+    let isDone: Bool
+    let audioLevel: Float
+    let accentColor: Color
+    var isHovered: Bool = false
+    var isHappy: Bool = false
+    var cursorLookX: Double = 0.0
+    var cursorLookY: Double = 0.0
+    var isCursorNear: Bool = false
+    var isTyping: Bool = false
+    var typingBurst: Bool = false
+
+    var body: some View {
+        let blinkPhase = sin(time * 1.7)
+        let isBlinking = blinkPhase > 0.96 && !isProcessing && !isDone && !isHappy && !isTyping
+
+        // Fox ear angles:
+        let leftEarAngle: Double = {
+            if isHappy {
+                return sin(time * 18.0) * 12.0
+            } else if isTyping {
+                return -14.0 // Cocked ear!
+            } else if isCursorNear {
+                return cursorLookX * 9.0 - 4.0
+            }
+            return -4.0
+        }()
+
+        let rightEarAngle: Double = {
+            if isHappy {
+                return -sin(time * 18.0) * 12.0
+            } else if isTyping {
+                return 18.0 // Alert swagger ear!
+            } else if isCursorNear {
+                return cursorLookX * 9.0 + 4.0
+            }
+            return 4.0
+        }()
+
+        let headTilt: Double = {
+            if isHappy {
+                return sin(time * 16.0) * 7.0
+            } else if isTyping {
+                return -8.0 // Sassy swagger head tilt!
+            } else if isCursorNear {
+                return cursorLookX * 7.5
+            }
+            return 0.0
+        }()
+
+        let bob: CGFloat = isHappy ? (-2.5 + CGFloat(abs(sin(time * 14.0))) * -1.5) : (isHovered ? -1.0 : 0.0)
+
+        let (eyeOffsetX, eyeOffsetY): (CGFloat, CGFloat) = {
+            if isHappy {
+                return (0.0, 0.0)
+            } else if isTyping {
+                return (-1.8, 0.8) // Masterclass sassy side-eye!
+            } else if isCursorNear {
+                return (CGFloat(cursorLookX * 2.0), CGFloat(-cursorLookY * 1.1))
+            }
+            return (0.0, 0.0)
+        }()
+
+        VStack(spacing: -3) {
+            // Fox Pointed Ears
+            HStack(spacing: 8) {
+                ZStack {
+                    Path { p in
+                        p.move(to: CGPoint(x: 0, y: 7))
+                        p.addLine(to: CGPoint(x: 3.5, y: 0))
+                        p.addLine(to: CGPoint(x: 7, y: 7))
+                        p.closeSubpath()
+                    }
+                    .fill(Color(white: 0.22))
+
+                    Path { p in
+                        p.move(to: CGPoint(x: 1.5, y: 6))
+                        p.addLine(to: CGPoint(x: 3.5, y: 1.5))
+                        p.addLine(to: CGPoint(x: 5.5, y: 6))
+                        p.closeSubpath()
+                    }
+                    .fill(accentColor)
+                }
+                .frame(width: 7, height: 7)
+                .rotationEffect(.degrees(leftEarAngle))
+
+                ZStack {
+                    Path { p in
+                        p.move(to: CGPoint(x: 0, y: 7))
+                        p.addLine(to: CGPoint(x: 3.5, y: 0))
+                        p.addLine(to: CGPoint(x: 7, y: 7))
+                        p.closeSubpath()
+                    }
+                    .fill(Color(white: 0.22))
+
+                    Path { p in
+                        p.move(to: CGPoint(x: 1.5, y: 6))
+                        p.addLine(to: CGPoint(x: 3.5, y: 1.5))
+                        p.addLine(to: CGPoint(x: 5.5, y: 6))
+                        p.closeSubpath()
+                    }
+                    .fill(accentColor)
+                }
+                .frame(width: 7, height: 7)
+                .rotationEffect(.degrees(rightEarAngle))
+            }
+            .offset(y: 2)
+
+            ZStack {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [Color(white: 0.24), Color(white: 0.12)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .frame(width: 19, height: 17)
+                    .overlay(
+                        Circle()
+                            .stroke(LinearGradient(colors: [Color.white.opacity(0.4), Color.clear], startPoint: .top, endPoint: .bottom), lineWidth: 0.6)
+                    )
+
+                if isDone || isHappy {
+                    HStack(spacing: 3) {
+                        Text("^")
+                            .font(.system(size: 7.5, weight: .bold))
+                            .foregroundColor(accentColor)
+                        Circle().fill(Color.pink.opacity(0.85)).frame(width: 2, height: 1.5)
+                        Text("^")
+                            .font(.system(size: 7.5, weight: .bold))
+                            .foregroundColor(accentColor)
+                    }
+                } else if isProcessing {
+                    HStack(spacing: 3) {
+                        Circle().fill(accentColor).frame(width: 2.5, height: 2.5)
+                        Circle().fill(accentColor).frame(width: 2.5, height: 2.5)
+                    }
+                } else {
+                    VStack(spacing: 0.5) {
+                        HStack(spacing: 4) {
+                            // Left Eye
+                            ZStack {
+                                Capsule()
+                                    .fill(accentColor)
+                                    .frame(width: 3.4, height: 4.8)
+                                    .scaleEffect(y: isBlinking ? 0.15 : (isTyping ? 0.5 : 1.0))
+                                    .offset(x: eyeOffsetX, y: eyeOffsetY)
+                                    .shadow(color: accentColor.opacity(0.6), radius: 1.5)
+
+                                if (isCursorNear || isHovered) && !isBlinking && !isTyping {
+                                    Circle()
+                                        .fill(Color.white)
+                                        .frame(width: 1.1, height: 1.1)
+                                        .offset(x: eyeOffsetX - 0.4, y: eyeOffsetY - 0.8)
+                                }
+                            }
+
+                            // Right Eye
+                            ZStack {
+                                Capsule()
+                                    .fill(accentColor)
+                                    .frame(width: 3.4, height: 4.8)
+                                    .scaleEffect(y: isBlinking ? 0.15 : (isTyping ? 0.35 : 1.0))
+                                    .offset(x: eyeOffsetX, y: eyeOffsetY)
+                                    .shadow(color: accentColor.opacity(0.6), radius: 1.5)
+
+                                if (isCursorNear || isHovered) && !isBlinking && !isTyping {
+                                    Circle()
+                                        .fill(Color.white)
+                                        .frame(width: 1.1, height: 1.1)
+                                        .offset(x: eyeOffsetX - 0.4, y: eyeOffsetY - 0.8)
+                                }
+                            }
+                        }
+
+                        if isTyping {
+                            Text("¬‿¬")
+                                .font(.system(size: 3.8, weight: .bold))
+                                .foregroundColor(accentColor.opacity(0.9))
+                        } else {
+                            Circle()
+                                .fill(Color.white.opacity(0.7))
+                                .frame(width: 1.5, height: 1.2)
+                        }
+                    }
+                }
+            }
+        }
+        .rotationEffect(.degrees(headTilt))
+        .offset(y: bob)
+        .animation(.spring(response: 0.28, dampingFraction: 0.72), value: isTyping)
+        .animation(.spring(response: 0.26, dampingFraction: 0.75), value: isCursorNear)
     }
 }
 
@@ -1475,17 +1740,6 @@ struct InteractiveCharacterView: View {
 
         ZStack {
             switch charType {
-            case "birb", "parakeet":
-                BirbCharacterView(
-                    time: time,
-                    isRecording: state.isRecording,
-                    isProcessing: state.isProcessing,
-                    isDone: isDone,
-                    audioLevel: state.audioLevel,
-                    accentColor: state.hudAccentColor,
-                    isHovered: state.isHUDHovered,
-                    isHappy: state.isPetHappy
-                )
             case "neko", "cat":
                 NekoCharacterView(
                     time: time,
@@ -1495,10 +1749,15 @@ struct InteractiveCharacterView: View {
                     audioLevel: state.audioLevel,
                     accentColor: state.hudAccentColor,
                     isHovered: state.isHUDHovered,
-                    isHappy: state.isPetHappy
+                    isHappy: state.isPetHappy,
+                    cursorLookX: state.cursorLookX,
+                    cursorLookY: state.cursorLookY,
+                    isCursorNear: state.isCursorNear,
+                    isTyping: state.isUserTyping,
+                    typingBurst: state.typingSpeedBurst
                 )
-            case "orb_gears", "orb", "gears":
-                OrbGearsCharacterView(
+            case "luna", "spirit", "ghost", "birb":
+                LunaCharacterView(
                     time: time,
                     isRecording: state.isRecording,
                     isProcessing: state.isProcessing,
@@ -1506,7 +1765,28 @@ struct InteractiveCharacterView: View {
                     audioLevel: state.audioLevel,
                     accentColor: state.hudAccentColor,
                     isHovered: state.isHUDHovered,
-                    isHappy: state.isPetHappy
+                    isHappy: state.isPetHappy,
+                    cursorLookX: state.cursorLookX,
+                    cursorLookY: state.cursorLookY,
+                    isCursorNear: state.isCursorNear,
+                    isTyping: state.isUserTyping,
+                    typingBurst: state.typingSpeedBurst
+                )
+            case "kuro", "fox", "orb_gears":
+                KuroCharacterView(
+                    time: time,
+                    isRecording: state.isRecording,
+                    isProcessing: state.isProcessing,
+                    isDone: isDone,
+                    audioLevel: state.audioLevel,
+                    accentColor: state.hudAccentColor,
+                    isHovered: state.isHUDHovered,
+                    isHappy: state.isPetHappy,
+                    cursorLookX: state.cursorLookX,
+                    cursorLookY: state.cursorLookY,
+                    isCursorNear: state.isCursorNear,
+                    isTyping: state.isUserTyping,
+                    typingBurst: state.typingSpeedBurst
                 )
             case "custom":
                 let customPath = FileManager.default.homeDirectoryForCurrentUser
@@ -1523,7 +1803,12 @@ struct InteractiveCharacterView: View {
                         audioLevel: state.audioLevel,
                         accentColor: state.hudAccentColor,
                         isHovered: state.isHUDHovered,
-                        isHappy: state.isPetHappy
+                        isHappy: state.isPetHappy,
+                        cursorLookX: state.cursorLookX,
+                        cursorLookY: state.cursorLookY,
+                        isCursorNear: state.isCursorNear,
+                        isTyping: state.isUserTyping,
+                        typingBurst: state.typingSpeedBurst
                     )
                 }
             default: // "gearbot"
@@ -1535,7 +1820,12 @@ struct InteractiveCharacterView: View {
                     audioLevel: state.audioLevel,
                     accentColor: state.hudAccentColor,
                     isHovered: state.isHUDHovered,
-                    isHappy: state.isPetHappy
+                    isHappy: state.isPetHappy,
+                    cursorLookX: state.cursorLookX,
+                    cursorLookY: state.cursorLookY,
+                    isCursorNear: state.isCursorNear,
+                    isTyping: state.isUserTyping,
+                    typingBurst: state.typingSpeedBurst
                 )
             }
         }
@@ -2092,6 +2382,12 @@ final class FloatingHUDController {
         }
     }
 
+    func currentHUDCenter() -> NSPoint {
+        guard let p = panel, p.isVisible else { return .zero }
+        let frame = p.frame
+        return NSPoint(x: frame.midX, y: frame.midY)
+    }
+
     // MARK: - Mascot & Flow Mode Context Menu
     func buildContextMenu() -> NSMenu {
         let menu = NSMenu()
@@ -2151,10 +2447,10 @@ final class FloatingHUDController {
         // 2. Companion Mascot Submenu
         let mascotMenu = NSMenu()
         let bots: [(id: String, name: String)] = [
-            ("gearbot", "🤖 GearBot"),
-            ("birb", "🦜 Birb"),
-            ("neko", "🐱 Neko"),
-            ("orb_gears", "⚙️ Tourbillon Orb")
+            ("gearbot", "🤖 GearBot (Curious)"),
+            ("neko", "🐱 Neko (Cozy Cat)"),
+            ("luna", "👻 Luna (Gentle Spirit)"),
+            ("kuro", "🦊 Kuro (Clever Fox)")
         ]
         for bot in bots {
             let item = NSMenuItem(title: bot.name, action: #selector(contextSelectMascot(_:)), keyEquivalent: "")
@@ -2615,6 +2911,144 @@ final class FloatingHUDController {
             } completionHandler: { [weak self] in
                 self?.snapGuidePanel?.orderOut(nil)
                 self?.snapGuidePanel = nil
+            }
+        }
+    }
+}
+
+// MARK: - Low-Power Interactive Companion Tracker (Cursor Look-At & Typing Side-Eye)
+final class CompanionTrackerManager {
+    static let shared = CompanionTrackerManager()
+
+    private var mouseMonitor: Any?
+    private var keyMonitor: Any?
+    private var localMouseMonitor: Any?
+    private var localKeyMonitor: Any?
+    private var lastMouseTime: Double = 0.0
+    private var typingResetTimer: Timer?
+    private var recentKeyTimestamps: [Double] = []
+
+    private init() {}
+
+    func start() {
+        stop()
+
+        // 1. Local Monitors (within Velox app itself)
+        localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged]) { [weak self] event in
+            self?.handleMouseMoved(event)
+            return event
+        }
+
+        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
+            self?.handleKeyDown(event)
+            return event
+        }
+
+        // 2. Global Monitors (system-wide when typing or navigating in other apps)
+        // Zero CPU polling: passive event callbacks throttled to ~35Hz
+        guard AXIsProcessTrusted() else { return }
+
+        mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged]) { [weak self] event in
+            self?.handleMouseMoved(event)
+        }
+
+        keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
+            self?.handleKeyDown(event)
+        }
+    }
+
+    func stop() {
+        if let m = mouseMonitor {
+            NSEvent.removeMonitor(m)
+            mouseMonitor = nil
+        }
+        if let k = keyMonitor {
+            NSEvent.removeMonitor(k)
+            keyMonitor = nil
+        }
+        if let lm = localMouseMonitor {
+            NSEvent.removeMonitor(lm)
+            localMouseMonitor = nil
+        }
+        if let lk = localKeyMonitor {
+            NSEvent.removeMonitor(lk)
+            localKeyMonitor = nil
+        }
+        typingResetTimer?.invalidate()
+        typingResetTimer = nil
+        recentKeyTimestamps.removeAll()
+    }
+
+    private func handleMouseMoved(_ event: NSEvent) {
+        let now = ProcessInfo.processInfo.systemUptime
+        // Strict rate-limiting to ~35Hz (>= 0.028s between samples) to protect battery & prevent lag
+        guard (now - lastMouseTime) >= 0.028 else { return }
+        lastMouseTime = now
+
+        let hudCenter = FloatingHUDController.shared.currentHUDCenter()
+        guard hudCenter != .zero else {
+            if AppState.shared.isCursorNear {
+                DispatchQueue.main.async {
+                    AppState.shared.isCursorNear = false
+                    AppState.shared.cursorLookX = 0.0
+                    AppState.shared.cursorLookY = 0.0
+                }
+            }
+            return
+        }
+
+        let mouseLoc = NSEvent.mouseLocation
+        let dx = mouseLoc.x - hudCenter.x
+        let dy = mouseLoc.y - hudCenter.y
+        let distance = hypot(dx, dy)
+
+        // Proximity bubble: 420 points
+        if distance < 420.0 {
+            let normalizedX = max(-1.0, min(1.0, Double(dx / 220.0)))
+            let normalizedY = max(-1.0, min(1.0, Double(dy / 220.0)))
+
+            DispatchQueue.main.async {
+                if !AppState.shared.isCursorNear ||
+                   abs(AppState.shared.cursorLookX - normalizedX) > 0.02 ||
+                   abs(AppState.shared.cursorLookY - normalizedY) > 0.02 {
+                    AppState.shared.isCursorNear = true
+                    AppState.shared.cursorLookX = normalizedX
+                    AppState.shared.cursorLookY = normalizedY
+                }
+            }
+        } else {
+            if AppState.shared.isCursorNear {
+                DispatchQueue.main.async {
+                    AppState.shared.isCursorNear = false
+                    AppState.shared.cursorLookX = 0.0
+                    AppState.shared.cursorLookY = 0.0
+                }
+            }
+        }
+    }
+
+    private func handleKeyDown(_ event: NSEvent) {
+        let now = ProcessInfo.processInfo.systemUptime
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+
+            // Keep keystrokes in last 1.8s to detect fast typing bursts
+            self.recentKeyTimestamps = self.recentKeyTimestamps.filter { now - $0 < 1.8 }
+            self.recentKeyTimestamps.append(now)
+
+            let isBurst = self.recentKeyTimestamps.count >= 8
+
+            if !AppState.shared.isUserTyping || AppState.shared.typingSpeedBurst != isBurst {
+                AppState.shared.isUserTyping = true
+                AppState.shared.typingSpeedBurst = isBurst
+            }
+
+            // Debounce timer resets typing side-eye after 1.35s of inactivity
+            self.typingResetTimer?.invalidate()
+            self.typingResetTimer = Timer.scheduledTimer(withTimeInterval: 1.35, repeats: false) { _ in
+                AppState.shared.isUserTyping = false
+                AppState.shared.typingSpeedBurst = false
             }
         }
     }
@@ -3093,9 +3527,9 @@ struct CompanionTabPane: View {
 
                 HStack(spacing: 4) {
                     MascotChip(id: "gearbot", icon: "🤖", label: "Gear")
-                    MascotChip(id: "birb", icon: "🦜", label: "Birb")
                     MascotChip(id: "neko", icon: "🐱", label: "Neko")
-                    MascotChip(id: "orb_gears", icon: "⚙️", label: "Orb")
+                    MascotChip(id: "luna", icon: "👻", label: "Luna")
+                    MascotChip(id: "kuro", icon: "🦊", label: "Kuro")
                 }
             }
 
@@ -3163,10 +3597,10 @@ struct CompanionTabPane: View {
 
     private func mascotDisplayName(_ id: String) -> String {
         switch id.lowercased() {
-        case "birb", "parakeet": return "🦜 Birb"
-        case "neko", "cat": return "🐱 Neko"
-        case "orb_gears", "orb", "gears": return "⚙️ Tourbillon Orb"
-        default: return "🤖 GearBot"
+        case "luna", "spirit", "ghost": return "👻 Luna (Spirit)"
+        case "neko", "cat": return "🐱 Neko (Cat)"
+        case "kuro", "fox": return "🦊 Kuro (Fox)"
+        default: return "🤖 GearBot (Bot)"
         }
     }
 }
@@ -3537,6 +3971,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         HotkeyManager.shared.setup()
         DaemonManager.shared.ensureRunning()
         DictationService.shared.setupAppObserver()
+        CompanionTrackerManager.shared.start()
         if AppState.shared.alwaysShowCompanion {
             FloatingHUDController.shared.show()
         }
