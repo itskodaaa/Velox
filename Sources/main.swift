@@ -42,6 +42,7 @@ final class AppState: ObservableObject {
     @Published var recordDuration: Double = 0.0
     @Published var lastResultText: String = ""
     @Published var lastLatencyMs: Double = 0.0
+    @Published var lastTranscriptionFinishedTime: Double = 0.0
     @Published var daemonReady: Bool = false
     @Published var isAccessibilityGranted: Bool = AXIsProcessTrusted()
     @Published var isMicrophoneGranted: Bool = (AVCaptureDevice.authorizationStatus(for: .audio) == .authorized)
@@ -949,6 +950,7 @@ final class DictationService {
                 let totalMs = round(Date().timeIntervalSince(tStart) * 1000)
                 AppState.shared.lastResultText = finalText
                 AppState.shared.lastLatencyMs = totalMs
+                AppState.shared.lastTranscriptionFinishedTime = ProcessInfo.processInfo.systemUptime
 
                 // 1. Immediately place on clipboard so text is never lost
                 let pasteboard = NSPasteboard.general
@@ -2568,11 +2570,11 @@ struct InteractiveCharacterView: View {
     let time: Double
 
     var body: some View {
-        let isDone = !state.isRecording && !state.isProcessing && !state.lastResultText.isEmpty
+        let now = ProcessInfo.processInfo.systemUptime
+        let isDone = !state.isRecording && !state.isProcessing && (now - state.lastTranscriptionFinishedTime < 2.2)
         let charType = state.hudCharacter.lowercased()
 
         // 1. Dynamic typing state (instant recovery: 0.45s after typing stops)
-        let now = ProcessInfo.processInfo.systemUptime
         let isTyping = state.isUserTyping || (now - state.lastTypingTime < 0.45)
 
         // 2. Flow mode timer awareness:
