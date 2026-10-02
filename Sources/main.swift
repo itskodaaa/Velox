@@ -4255,7 +4255,6 @@ final class CompanionTrackerManager {
 struct MenuBarControlCenterView: View {
     @ObservedObject var state = AppState.shared
     @Environment(\.colorScheme) var systemColorScheme
-    private let pollTimer = Timer.publish(every: 0.8, on: .main, in: .common).autoconnect()
 
     var isDark: Bool {
         if state.appTheme == "dark" { return true }
@@ -4270,7 +4269,7 @@ struct MenuBarControlCenterView: View {
 
         HStack(spacing: 0) {
             // 1. LEFT SIDEBAR NAVIGATION
-            VStack(spacing: 6) {
+            VStack(spacing: 8) {
                 // Brand Mark
                 VStack(spacing: 3) {
                     Image(systemName: "waveform.badge.microphone")
@@ -4281,11 +4280,11 @@ struct MenuBarControlCenterView: View {
                         .foregroundColor(isDark ? Color.white.opacity(0.9) : Color.black.opacity(0.85))
                         .tracking(1.0)
                 }
-                .padding(.top, 10)
+                .padding(.top, 12)
                 .padding(.bottom, 6)
 
                 // Navigation Tabs
-                VStack(spacing: 4) {
+                VStack(spacing: 5) {
                     SidebarTabButton(tab: .dictate, current: state.activeTab, isDark: isDark) { state.activeTab = .dictate }
                     SidebarTabButton(tab: .flow, current: state.activeTab, isDark: isDark) { state.activeTab = .flow }
                     SidebarTabButton(tab: .companion, current: state.activeTab, isDark: isDark) { state.activeTab = .companion }
@@ -4313,16 +4312,17 @@ struct MenuBarControlCenterView: View {
                             .font(.system(size: 7.5, weight: .semibold, design: .rounded))
                             .foregroundColor(isDark ? Color.white.opacity(0.65) : Color.black.opacity(0.65))
                     }
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2.5)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
                     .background(isDark ? Color.white.opacity(0.06) : Color.black.opacity(0.05))
                     .cornerRadius(8)
                 }
                 .buttonStyle(.plain)
+                .focusable(false)
                 .help("Theme: Click to toggle Auto / Dark / Light")
 
                 // Status Indicator at bottom of sidebar
-                HStack(spacing: 3) {
+                HStack(spacing: 3.5) {
                     Circle()
                         .fill(state.daemonReady ? Color.green.opacity(0.85) : Color.orange)
                         .frame(width: 5, height: 5)
@@ -4330,9 +4330,9 @@ struct MenuBarControlCenterView: View {
                         .font(.system(size: 8, weight: .medium))
                         .foregroundColor(.secondary)
                 }
-                .padding(.bottom, 8)
+                .padding(.bottom, 10)
             }
-            .frame(width: 76)
+            .frame(width: 80)
             .background(sidebarBg)
             .overlay(
                 Rectangle()
@@ -4355,23 +4355,20 @@ struct MenuBarControlCenterView: View {
                         SettingsTabPane()
                     }
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(width: 274)
+            .frame(width: 330)
             .background(baseBg)
         }
-        .frame(width: 350, height: 330)
+        .frame(width: 410, height: 385)
         .background(baseBg)
         .preferredColorScheme(state.appTheme == "dark" ? .dark : (state.appTheme == "light" ? .light : nil))
         .onAppear {
             state.loadConfigFromDisk()
             state.refreshPermissions()
             state.applyTheme()
-        }
-        .onReceive(pollTimer) { _ in
-            state.refreshPermissions()
         }
     }
 }
@@ -4387,7 +4384,7 @@ struct SidebarTabButton: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 3) {
+            VStack(spacing: 3.5) {
                 Image(systemName: tab.icon)
                     .font(.system(size: 13, weight: isSelected ? .bold : .regular))
                     .foregroundColor(isSelected ? AppState.shared.hudAccentColor : (isDark ? Color.white.opacity(0.45) : Color.black.opacity(0.45)))
@@ -4395,17 +4392,18 @@ struct SidebarTabButton: View {
                     .font(.system(size: 9, weight: isSelected ? .bold : .medium))
                     .foregroundColor(isSelected ? (isDark ? .white : .black) : (isDark ? Color.white.opacity(0.55) : Color.black.opacity(0.55)))
             }
-            .frame(width: 64, height: 42)
+            .frame(width: 68, height: 44)
             .background(
-                RoundedRectangle(cornerRadius: 7)
+                RoundedRectangle(cornerRadius: 8)
                     .fill(isSelected ? (isDark ? Color.white.opacity(0.09) : Color.black.opacity(0.07)) : Color.clear)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 7)
+                RoundedRectangle(cornerRadius: 8)
                     .strokeBorder(isSelected ? (isDark ? Color.white.opacity(0.12) : Color.black.opacity(0.09)) : Color.clear, lineWidth: 0.8)
             )
         }
         .buttonStyle(.plain)
+        .focusable(false)
     }
 }
 
@@ -4818,158 +4816,303 @@ struct FlowPresetButton: View {
     }
 }
 
-// MARK: - Tab Pane 3: Desktop Companion & Aesthetics
-struct CompanionTabPane: View {
-    @ObservedObject var state = AppState.shared
+// MARK: - Companion Preview Router (For Live Showcase Gallery)
+struct CompanionPreviewRouter: View {
+    let id: String
+    let time: Double
+    let accentColor: Color
+    let isHovered: Bool
+    let cursorLookX: Double
+    let cursorLookY: Double
+    let isCursorNear: Bool
 
     var body: some View {
-        VStack(spacing: 10) {
-            // Header
-            HStack {
-                Text("Companion")
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
-                Spacer()
-                Text(mascotDisplayName(state.hudCharacter))
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(state.hudAccentColor)
-            }
+        switch id {
+        case "axolotl":
+            AxolotlCharacterView(
+                time: time,
+                isRecording: false,
+                isProcessing: false,
+                isDone: isHovered,
+                audioLevel: isHovered ? 0.75 : Float(max(0, sin(time * 3.0) * 0.28)),
+                accentColor: accentColor,
+                isHovered: isHovered,
+                isHappy: isHovered,
+                cursorLookX: cursorLookX,
+                cursorLookY: cursorLookY,
+                isCursorNear: isCursorNear,
+                isTyping: false
+            )
+        case "bongo":
+            BongoCatCharacterView(
+                time: time,
+                isRecording: false,
+                isProcessing: false,
+                isDone: isHovered,
+                audioLevel: 0.0,
+                accentColor: accentColor,
+                isHovered: isHovered,
+                isHappy: isHovered,
+                cursorLookX: cursorLookX,
+                cursorLookY: cursorLookY,
+                isCursorNear: isCursorNear,
+                isTyping: isHovered
+            )
+        case "neko":
+            NekoCharacterView(
+                time: time,
+                isRecording: false,
+                isProcessing: false,
+                isDone: isHovered,
+                audioLevel: 0.0,
+                accentColor: accentColor,
+                isHovered: isHovered,
+                isHappy: isHovered,
+                cursorLookX: cursorLookX,
+                cursorLookY: cursorLookY,
+                isCursorNear: isCursorNear,
+                isTyping: false
+            )
+        case "kuro":
+            KuroCharacterView(
+                time: time,
+                isRecording: false,
+                isProcessing: false,
+                isDone: isHovered,
+                audioLevel: 0.0,
+                accentColor: accentColor,
+                isHovered: isHovered,
+                isHappy: isHovered,
+                cursorLookX: cursorLookX,
+                cursorLookY: cursorLookY,
+                isCursorNear: isCursorNear,
+                isTyping: false
+            )
+        default: // gearbot
+            GearBotCharacterView(
+                time: time,
+                isRecording: false,
+                isProcessing: false,
+                isDone: isHovered,
+                audioLevel: 0.0,
+                accentColor: accentColor,
+                isHovered: isHovered,
+                isHappy: isHovered,
+                cursorLookX: cursorLookX,
+                cursorLookY: cursorLookY,
+                isCursorNear: isCursorNear,
+                isTyping: false
+            )
+        }
+    }
+}
 
-            // Mascot Picker
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Mascot Character:")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(.secondary)
+// MARK: - Tab Pane 3: Desktop Companion & Interactive Sanctuary Showcase
+struct CompanionTabPane: View {
+    @ObservedObject var state = AppState.shared
+    @State private var hoveredMascot: String? = nil
+    @State private var galleryMouseLocation: CGPoint = CGPoint(x: 160, y: 55)
+    @State private var isMouseInShowcase: Bool = false
 
-                HStack(spacing: 4) {
-                    MascotChip(id: "axolotl", icon: "🫧", label: "Axolotl")
-                    MascotChip(id: "bongo", icon: "🐾", label: "Bongo")
-                    MascotChip(id: "neko", icon: "🐱", label: "Neko")
-                    MascotChip(id: "kuro", icon: "🦊", label: "Kuro")
-                    MascotChip(id: "gearbot", icon: "🤖", label: "Gear")
-                }
-            }
+    let mascots: [(id: String, name: String, tag: String)] = [
+        ("axolotl", "Axolotl", "Voice Gills"),
+        ("bongo", "Bongo Cat", "Typing Paws"),
+        ("neko", "Neko", "Cozy Cat"),
+        ("kuro", "Kuro", "Shadow Fox"),
+        ("gearbot", "GearBot", "Curious Bot")
+    ]
 
-            // Listening Animation Style Picker
-            VStack(alignment: .leading, spacing: 3) {
-                HStack {
-                    Text("Listening Visual:")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(.secondary)
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 0.033)) { timeline in
+            let time = timeline.date.timeIntervalSinceReferenceDate
+
+            VStack(alignment: .leading, spacing: 14) {
+                // Header
+                HStack(alignment: .center) {
+                    VStack(alignment: .leading, spacing: 1.5) {
+                        Text("Companion Sanctuary")
+                            .font(.system(size: 13, weight: .bold, design: .rounded))
+                        Text("Interactive desktop mascots that react in real-time")
+                            .font(.system(size: 8.5))
+                            .foregroundColor(.secondary)
+                    }
                     Spacer()
-                    Text(state.listeningStyle == "morph" ? "Morph to Bar" : (state.listeningStyle == "character" ? "Aura Only" : "Wave Only"))
-                        .font(.system(size: 8))
-                        .foregroundColor(.secondary)
+                    // Active Pill Badge
+                    HStack(spacing: 3.5) {
+                        Circle()
+                            .fill(state.hudAccentColor)
+                            .frame(width: 5, height: 5)
+                        Text(mascotDisplayName(state.hudCharacter))
+                            .font(.system(size: 8.5, weight: .semibold, design: .rounded))
+                            .foregroundColor(state.hudAccentColor)
+                    }
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3.5)
+                    .background(state.hudAccentColor.opacity(0.12))
+                    .cornerRadius(6)
                 }
 
-                HStack(spacing: 4) {
-                    ListeningStyleChip(id: "morph", icon: "sparkles", label: "Morph")
-                    ListeningStyleChip(id: "character", icon: "waveform.circle", label: "Aura")
-                    ListeningStyleChip(id: "waveform", icon: "waveform", label: "Wave")
-                }
-            }
+                // 1. Live Interactive 5-Mascot Showcase
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("ACTIVE MASCOT")
+                        .font(.system(size: 7.5, weight: .bold, design: .rounded))
+                        .foregroundColor(.secondary.opacity(0.8))
+                        .tracking(0.8)
 
-            // Accent Color Swatches
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Accent Color:")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(.secondary)
+                    HStack(spacing: 5) {
+                        ForEach(Array(mascots.enumerated()), id: \.element.id) { index, mascot in
+                            let isSelected = state.hudCharacter.lowercased() == mascot.id.lowercased()
+                            let isHovered = hoveredMascot == mascot.id
 
-                HStack(spacing: 7) {
-                    AccentColorDot(id: "amber", color: Color(red: 0.961, green: 0.620, blue: 0.043))
-                    AccentColorDot(id: "rose", color: Color(red: 0.957, green: 0.247, blue: 0.369))
-                    AccentColorDot(id: "emerald", color: Color(red: 0.063, green: 0.725, blue: 0.506))
-                    AccentColorDot(id: "cyan", color: Color(red: 0.024, green: 0.714, blue: 0.831))
-                    AccentColorDot(id: "purple", color: Color(red: 0.545, green: 0.361, blue: 0.965))
-                    AccentColorDot(id: "monochrome", color: Color(white: 0.92))
-                }
-            }
+                            let cardCenterX = CGFloat(index) * 63.0 + 30.0
+                            let dx = galleryMouseLocation.x - cardCenterX
+                            let dy = galleryMouseLocation.y - 45.0
+                            let cardLookX = max(-1.0, min(1.0, Double(dx / 40.0)))
+                            let cardLookY = max(-1.0, min(1.0, Double(-dy / 35.0)))
+                            let isNearCard = isMouseInShowcase && (abs(dx) < 65.0 && abs(dy) < 55.0)
 
-            // Companion Size (Increase & Reduce)
-            VStack(alignment: .leading, spacing: 3) {
-                HStack {
-                    Text("Companion Size:")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(.secondary)
-                    Spacer()
-                    Text(sizeDisplayName(state.hudSize))
-                        .font(.system(size: 8.5, weight: .semibold))
-                        .foregroundColor(state.hudAccentColor)
-                }
+                            Button(action: {
+                                state.hudCharacter = mascot.id
+                                state.saveConfigToDisk()
+                                FloatingHUDController.shared.show()
+                                NSSound(named: "Tink")?.play()
+                            }) {
+                                VStack(spacing: 4) {
+                                    // Animated vector character preview
+                                    ZStack {
+                                        CompanionPreviewRouter(
+                                            id: mascot.id,
+                                            time: time,
+                                            accentColor: state.hudAccentColor,
+                                            isHovered: isHovered,
+                                            cursorLookX: isMouseInShowcase ? cardLookX : sin(time * 1.5 + Double(index) * 0.8) * 0.6,
+                                            cursorLookY: isMouseInShowcase ? cardLookY : cos(time * 1.2 + Double(index) * 0.7) * 0.4,
+                                            isCursorNear: isNearCard || isHovered
+                                        )
+                                    }
+                                    .frame(width: 32, height: 30)
 
-                HStack(spacing: 4) {
-                    SizeChip(id: "mini", icon: "arrow.down.right.and.arrow.up.left", label: "Mini")
-                    SizeChip(id: "compact", icon: "square", label: "Regular")
-                    SizeChip(id: "spacious", icon: "arrow.up.left.and.arrow.down.right", label: "Large")
+                                    // Mascot Name & Subtitle
+                                    VStack(spacing: 1) {
+                                        Text(mascot.name)
+                                            .font(.system(size: 8.5, weight: isSelected ? .bold : .medium, design: .rounded))
+                                            .foregroundColor(isSelected ? .primary : .secondary)
+                                            .lineLimit(1)
 
-                    Spacer(minLength: 2)
+                                        Text(mascot.tag)
+                                            .font(.system(size: 7, weight: .regular))
+                                            .foregroundColor(.secondary.opacity(0.7))
+                                            .lineLimit(1)
+                                    }
 
-                    // Stepper (+ / -) to quickly increase or reduce size
-                    HStack(spacing: 3) {
-                        Button(action: { state.decreaseHUDSize() }) {
-                            Image(systemName: "minus")
-                                .font(.system(size: 7.5, weight: .bold))
-                                .frame(width: 18, height: 19)
-                                .background(Color.primary.opacity(0.06))
-                                .cornerRadius(4)
+                                    // Status Badge
+                                    Text(isSelected ? "Active" : "Select")
+                                        .font(.system(size: 7, weight: isSelected ? .bold : .medium))
+                                        .foregroundColor(isSelected ? .white : .secondary.opacity(0.7))
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 1.5)
+                                        .background(isSelected ? state.hudAccentColor : Color.primary.opacity(0.04))
+                                        .cornerRadius(4)
+                                }
+                                .padding(.vertical, 7)
+                                .padding(.horizontal, 2)
+                                .frame(maxWidth: .infinity)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 9)
+                                        .fill(isSelected ? Color.primary.opacity(0.08) : (isHovered ? Color.primary.opacity(0.05) : Color.primary.opacity(0.02)))
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 9)
+                                        .strokeBorder(isSelected ? state.hudAccentColor : (isHovered ? Color.primary.opacity(0.2) : Color.primary.opacity(0.06)), lineWidth: isSelected ? 1.4 : 0.8)
+                                )
+                                .scaleEffect(isHovered ? 1.03 : 1.0)
+                                .animation(.spring(response: 0.22, dampingFraction: 0.75), value: isHovered)
+                                .animation(.spring(response: 0.25, dampingFraction: 0.8), value: isSelected)
+                            }
+                            .buttonStyle(.plain)
+                            .focusable(false)
+                            .onHover { h in
+                                hoveredMascot = h ? mascot.id : nil
+                            }
                         }
-                        .buttonStyle(.plain)
-                        .help("Reduce Size (-)")
-
-                        Button(action: { state.increaseHUDSize() }) {
-                            Image(systemName: "plus")
-                                .font(.system(size: 7.5, weight: .bold))
-                                .frame(width: 18, height: 19)
-                                .background(Color.primary.opacity(0.06))
-                                .cornerRadius(4)
+                    }
+                    .padding(5)
+                    .background(Color.primary.opacity(0.03))
+                    .cornerRadius(11)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 11)
+                            .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.8)
+                    )
+                    .onContinuousHover { phase in
+                        switch phase {
+                        case .active(let location):
+                            galleryMouseLocation = location
+                            isMouseInShowcase = true
+                        case .ended:
+                            isMouseInShowcase = false
                         }
-                        .buttonStyle(.plain)
-                        .help("Increase Size (+)")
                     }
                 }
-            }
 
-            Divider().opacity(0.12)
+                // 2. Accent Color Palette
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("ACCENT COLOR")
+                        .font(.system(size: 7.5, weight: .bold, design: .rounded))
+                        .foregroundColor(.secondary.opacity(0.8))
+                        .tracking(0.8)
 
-            // Desktop Pet Toggle
-            HStack {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Always on Desktop")
-                        .font(.system(size: 9.5, weight: .medium))
-                    Text("Keep mascot floating next to Dock")
-                        .font(.system(size: 8))
-                        .foregroundColor(.secondary)
-                }
-                Spacer()
-                Toggle("", isOn: $state.alwaysShowCompanion)
-                    .toggleStyle(.switch)
-                    .controlSize(.mini)
-                    .onChange(of: state.alwaysShowCompanion) { _, enabled in
-                        state.saveConfigToDisk()
-                        if enabled {
-                            FloatingHUDController.shared.show()
-                        } else if !state.isRecording && !state.isProcessing && !state.isFlowActive {
-                            FloatingHUDController.shared.hide()
-                        }
+                    HStack(spacing: 8) {
+                        AccentColorDot(id: "amber", color: Color(red: 0.961, green: 0.620, blue: 0.043))
+                        AccentColorDot(id: "rose", color: Color(red: 0.957, green: 0.247, blue: 0.369))
+                        AccentColorDot(id: "emerald", color: Color(red: 0.063, green: 0.725, blue: 0.506))
+                        AccentColorDot(id: "cyan", color: Color(red: 0.024, green: 0.714, blue: 0.831))
+                        AccentColorDot(id: "purple", color: Color(red: 0.545, green: 0.361, blue: 0.965))
+                        AccentColorDot(id: "monochrome", color: Color(white: 0.92))
+                        Spacer()
                     }
+                    .padding(.horizontal, 4)
+                }
+
+                // 3. Companion Size & Desktop Pet Toggle
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("COMPANION PILL")
+                        .font(.system(size: 7.5, weight: .bold, design: .rounded))
+                        .foregroundColor(.secondary.opacity(0.8))
+                        .tracking(0.8)
+
+                    HStack(spacing: 6) {
+                        SizeChip(id: "mini", icon: "arrow.down.right.and.arrow.up.left", label: "Mini")
+                        SizeChip(id: "compact", icon: "square", label: "Regular")
+                        SizeChip(id: "spacious", icon: "arrow.up.left.and.arrow.down.right", label: "Large")
+
+                        Spacer()
+
+                        Toggle("Desktop Pet", isOn: $state.alwaysShowCompanion)
+                            .toggleStyle(.switch)
+                            .controlSize(.mini)
+                            .font(.system(size: 8.5, weight: .medium))
+                            .focusable(false)
+                            .onChange(of: state.alwaysShowCompanion) { _, enabled in
+                                state.saveConfigToDisk()
+                                if enabled {
+                                    FloatingHUDController.shared.show()
+                                } else if !state.isRecording && !state.isProcessing && !state.isFlowActive {
+                                    FloatingHUDController.shared.hide()
+                                }
+                            }
+                    }
+                }
             }
         }
     }
 
     private func mascotDisplayName(_ id: String) -> String {
         switch id.lowercased() {
-        case "axolotl", "luna", "spirit", "ghost": return "🫧 Axolotl (Voice Gills)"
-        case "bongo", "bongocat": return "🐾 Bongo Cat (Paws)"
-        case "neko", "cat": return "🐱 Neko (Cat)"
-        case "kuro", "fox": return "🦊 Kuro (Fox)"
-        default: return "🤖 GearBot (Bot)"
-        }
-    }
-
-    private func sizeDisplayName(_ id: String) -> String {
-        switch id {
-        case "mini": return "Mini (Small)"
-        case "spacious": return "Large (Spacious)"
-        default: return "Regular (Default)"
+        case "axolotl", "luna", "spirit", "ghost": return "🫧 Axolotl"
+        case "bongo", "bongocat": return "🐾 Bongo Cat"
+        case "neko", "cat": return "🐱 Neko"
+        case "kuro", "fox": return "🦊 Kuro"
+        default: return "🤖 GearBot"
         }
     }
 }
@@ -5004,6 +5147,7 @@ struct SizeChip: View {
             .cornerRadius(5)
         }
         .buttonStyle(.plain)
+        .focusable(false)
     }
 }
 
@@ -5033,6 +5177,7 @@ struct AccentColorDot: View {
             .frame(width: 24, height: 24)
         }
         .buttonStyle(.plain)
+        .focusable(false)
     }
 }
 
@@ -5050,7 +5195,7 @@ struct ThemePresetChip: View {
             state.appTheme = id
             state.saveConfigToDisk()
         }) {
-            HStack(spacing: 3) {
+            HStack(spacing: 3.5) {
                 Image(systemName: icon)
                     .font(.system(size: 8))
                 Text(label)
@@ -5059,17 +5204,89 @@ struct ThemePresetChip: View {
             .lineLimit(1)
             .minimumScaleFactor(0.75)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 4)
-            .padding(.horizontal, 3)
-            .background(isSelected ? state.hudAccentColor.opacity(0.18) : Color.primary.opacity(0.05))
+            .padding(.vertical, 4.5)
+            .padding(.horizontal, 4)
+            .background(isSelected ? state.hudAccentColor.opacity(0.18) : Color.primary.opacity(0.04))
             .overlay(
-                RoundedRectangle(cornerRadius: 5)
-                    .strokeBorder(isSelected ? state.hudAccentColor.opacity(0.55) : Color.primary.opacity(0.08), lineWidth: 0.8)
+                RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(isSelected ? state.hudAccentColor.opacity(0.6) : Color.primary.opacity(0.08), lineWidth: 0.8)
             )
-            .cornerRadius(5)
+            .cornerRadius(6)
             .foregroundColor(isSelected ? state.hudAccentColor : .primary)
         }
         .buttonStyle(.plain)
+        .focusable(false)
+    }
+}
+
+// MARK: - Shortcut Chip
+struct ShortcutChip: View {
+    let id: String
+    let label: String
+    @ObservedObject var state = AppState.shared
+
+    var isSelected: Bool { state.activeShortcut == id }
+
+    var body: some View {
+        Button(action: { HotkeyManager.shared.setShortcut(id) }) {
+            Text(label)
+                .font(.system(size: 8.5, weight: isSelected ? .bold : .medium))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+                .background(isSelected ? state.hudAccentColor.opacity(0.18) : Color.primary.opacity(0.04))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .strokeBorder(isSelected ? state.hudAccentColor.opacity(0.6) : Color.primary.opacity(0.08), lineWidth: 0.8)
+                )
+                .cornerRadius(6)
+                .foregroundColor(isSelected ? state.hudAccentColor : .primary)
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+    }
+}
+
+// MARK: - Position Preset Chip
+struct PositionPresetChip: View {
+    let id: String
+    let icon: String
+    let label: String
+    @ObservedObject var state = AppState.shared
+
+    var isSelected: Bool {
+        if id == "left" { return state.hudPosition == "left" || state.hudPosition == "bottom_left" }
+        if id == "right" { return state.hudPosition == "right" || state.hudPosition == "bottom_right" }
+        return state.hudPosition == id
+    }
+
+    var body: some View {
+        Button(action: {
+            state.hudPosition = id
+            state.hudYOffset = 0.0
+            state.saveConfigToDisk()
+            FloatingHUDController.shared.updatePosition(animated: true)
+        }) {
+            HStack(spacing: 3) {
+                Image(systemName: icon)
+                    .font(.system(size: 8))
+                Text(label)
+                    .font(.system(size: 8.5, weight: isSelected ? .bold : .medium))
+            }
+            .lineLimit(1)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
+            .background(isSelected ? state.hudAccentColor.opacity(0.18) : Color.primary.opacity(0.04))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(isSelected ? state.hudAccentColor.opacity(0.6) : Color.primary.opacity(0.08), lineWidth: 0.8)
+            )
+            .cornerRadius(6)
+            .foregroundColor(isSelected ? state.hudAccentColor : .primary)
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
     }
 }
 
@@ -5078,104 +5295,134 @@ struct SettingsTabPane: View {
     @ObservedObject var state = AppState.shared
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 9) {
             // Header
             HStack {
                 Text("Preferences")
                     .font(.system(size: 13, weight: .bold, design: .rounded))
                 Spacer()
+                Text("v1.2.0")
+                    .font(.system(size: 8.5, weight: .medium, design: .monospaced))
+                    .foregroundColor(.secondary.opacity(0.6))
             }
 
-            // Theme & Appearance
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Appearance & Theme:")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(.secondary)
+            // 1. Appearance & Theme Card
+            VStack(alignment: .leading, spacing: 5) {
+                Text("APPEARANCE")
+                    .font(.system(size: 7.5, weight: .bold, design: .rounded))
+                    .foregroundColor(.secondary.opacity(0.8))
+                    .tracking(0.8)
 
-                HStack(spacing: 4) {
+                HStack(spacing: 5) {
                     ThemePresetChip(id: "system", icon: "circle.lefthalf.filled", label: "Auto")
-                    ThemePresetChip(id: "dark", icon: "moon.stars.fill", label: "Premium Dark")
+                    ThemePresetChip(id: "dark", icon: "moon.stars.fill", label: "Dark (OLED)")
                     ThemePresetChip(id: "light", icon: "sun.max.fill", label: "Light")
                 }
             }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.primary.opacity(0.025))
+            .cornerRadius(8)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.8)
+            )
 
-            // Microphone Input
-            VStack(alignment: .leading, spacing: 3) {
-                HStack {
-                    Image(systemName: "mic.fill")
-                        .font(.system(size: 8.5))
-                        .foregroundColor(state.hudAccentColor)
-                    Text("Microphone Input:")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(.secondary)
-                    Spacer()
-                    Button(action: { state.refreshAudioDevices() }) {
-                        HStack(spacing: 2) {
-                            Image(systemName: "arrow.triangle.2.circlepath")
-                                .font(.system(size: 7))
-                            Text("Refresh")
-                                .font(.system(size: 8))
-                        }
-                        .foregroundColor(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Rescan connected audio devices")
-                }
+            // 2. Microphone Input Card
+            VStack(alignment: .leading, spacing: 5) {
+                Text("MICROPHONE INPUT")
+                    .font(.system(size: 7.5, weight: .bold, design: .rounded))
+                    .foregroundColor(.secondary.opacity(0.8))
+                    .tracking(0.8)
 
-                Menu {
-                    Button(action: {
-                        state.selectAudioDevice(name: "System Default")
-                    }) {
-                        HStack {
-                            Text("System Default (\(state.currentMicName))")
-                            if state.selectedMicName.isEmpty || state.selectedMicName == "System Default" {
-                                Image(systemName: "checkmark")
+                HStack(spacing: 6) {
+                    Menu {
+                        Button(action: {
+                            state.selectAudioDevice(name: "System Default")
+                        }) {
+                            HStack {
+                                Text("System Default (\(state.currentMicName))")
+                                if state.selectedMicName.isEmpty || state.selectedMicName == "System Default" {
+                                    Image(systemName: "checkmark")
+                                }
                             }
                         }
-                    }
-                    if !state.availableMicDevices.isEmpty {
-                        Divider()
-                        ForEach(state.availableMicDevices, id: \.id) { device in
-                            Button(action: {
-                                state.selectAudioDevice(name: device.name)
-                            }) {
-                                HStack {
-                                    Text(device.name)
-                                    if state.selectedMicName == device.name {
-                                        Image(systemName: "checkmark")
+                        if !state.availableMicDevices.isEmpty {
+                            Divider()
+                            ForEach(state.availableMicDevices, id: \.id) { device in
+                                Button(action: {
+                                    state.selectAudioDevice(name: device.name)
+                                }) {
+                                    HStack {
+                                        Text(device.name)
+                                        if state.selectedMicName == device.name {
+                                            Image(systemName: "checkmark")
+                                        }
                                     }
                                 }
                             }
                         }
+                    } label: {
+                        HStack(spacing: 5) {
+                            Circle()
+                                .fill(Color.green.opacity(0.85))
+                                .frame(width: 5, height: 5)
+                            Text(state.selectedMicName.isEmpty || state.selectedMicName == "System Default" ? "Default (\(state.currentMicName))" : state.selectedMicName)
+                                .font(.system(size: 8.5, weight: .medium))
+                                .lineLimit(1)
+                            Spacer()
+                            Image(systemName: "chevron.up.chevron.down")
+                                .font(.system(size: 7))
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                        .background(Color.primary.opacity(0.04))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 5)
+                                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.8)
+                        )
+                        .cornerRadius(5)
                     }
-                } label: {
-                    HStack(spacing: 5) {
-                        Circle()
-                            .fill(Color.green.opacity(0.85))
-                            .frame(width: 5, height: 5)
-                        Text(state.selectedMicName.isEmpty || state.selectedMicName == "System Default" ? "Default (\(state.currentMicName))" : state.selectedMicName)
-                            .font(.system(size: 9, weight: .medium))
-                            .lineLimit(1)
-                        Spacer()
-                        Image(systemName: "chevron.up.chevron.down")
+                    .menuStyle(.borderlessButton)
+                    .focusable(false)
+
+                    Button(action: { state.refreshAudioDevices() }) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
                             .font(.system(size: 7.5))
                             .foregroundColor(.secondary)
+                            .frame(width: 22, height: 22)
+                            .background(Color.primary.opacity(0.04))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 5)
+                                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.8)
+                            )
+                            .cornerRadius(5)
                     }
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 4)
-                    .background(Color.primary.opacity(0.05))
-                    .cornerRadius(5)
+                    .buttonStyle(.plain)
+                    .focusable(false)
+                    .help("Rescan connected audio devices")
                 }
-                .menuStyle(.borderlessButton)
             }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.primary.opacity(0.025))
+            .cornerRadius(8)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.8)
+            )
 
-            // Shortcuts
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Shortcut:")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(.secondary)
+            // 3. Activation Shortcut Card
+            VStack(alignment: .leading, spacing: 5) {
+                Text("GLOBAL ACTIVATION SHORTCUT")
+                    .font(.system(size: 7.5, weight: .bold, design: .rounded))
+                    .foregroundColor(.secondary.opacity(0.8))
+                    .tracking(0.8)
 
-                HStack(spacing: 3) {
+                HStack(spacing: 4) {
                     ShortcutChip(id: "opt_space", label: "⌥ Space")
                     ShortcutChip(id: "f8", label: "F8")
                     ShortcutChip(id: "ctrl_space", label: "⌃ Space")
@@ -5183,16 +5430,26 @@ struct SettingsTabPane: View {
                     ShortcutChip(id: "hold_option", label: "Hold ⌥")
                 }
             }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.primary.opacity(0.025))
+            .cornerRadius(8)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.8)
+            )
 
-            // Dock Position & Nudge
-            VStack(alignment: .leading, spacing: 3) {
+            // 4. HUD Docking & Nudge Card
+            VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    Text("Dock & Position:")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(.secondary)
+                    Text("HUD DOCKING & NUDGE")
+                        .font(.system(size: 7.5, weight: .bold, design: .rounded))
+                        .foregroundColor(.secondary.opacity(0.8))
+                        .tracking(0.8)
                     Spacer()
                     Text(positionDisplayName(state.hudPosition, offset: state.hudYOffset))
-                        .font(.system(size: 8))
+                        .font(.system(size: 8, weight: .medium))
                         .foregroundColor(.secondary)
                 }
 
@@ -5204,7 +5461,7 @@ struct SettingsTabPane: View {
 
                 HStack(spacing: 6) {
                     Text("Dock Nudge:")
-                        .font(.system(size: 8.5))
+                        .font(.system(size: 8, weight: .medium))
                         .foregroundColor(.secondary)
 
                     Button(action: {
@@ -5216,14 +5473,19 @@ struct SettingsTabPane: View {
                             Image(systemName: "arrow.down")
                                 .font(.system(size: 7))
                             Text("Lower")
-                                .font(.system(size: 8.5))
+                                .font(.system(size: 8))
                         }
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(Color.primary.opacity(0.06))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2.5)
+                        .background(Color.primary.opacity(0.05))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4)
+                                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.8)
+                        )
                         .cornerRadius(4)
                     }
                     .buttonStyle(.plain)
+                    .focusable(false)
 
                     Button(action: {
                         state.hudYOffset = min(80.0, state.hudYOffset + 3.0)
@@ -5234,45 +5496,70 @@ struct SettingsTabPane: View {
                             Image(systemName: "arrow.up")
                                 .font(.system(size: 7))
                             Text("Raise")
-                                .font(.system(size: 8.5))
+                                .font(.system(size: 8))
                         }
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(Color.primary.opacity(0.06))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2.5)
+                        .background(Color.primary.opacity(0.05))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4)
+                                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.8)
+                        )
                         .cornerRadius(4)
                     }
                     .buttonStyle(.plain)
+                    .focusable(false)
 
                     Spacer()
 
                     Text("\(Int(state.hudYOffset)) px")
-                        .font(.system(size: 8, weight: .medium, design: .monospaced))
-                        .foregroundColor(.secondary)
+                        .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                        .foregroundColor(state.hudYOffset != 0 ? state.hudAccentColor : .secondary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Color.primary.opacity(0.04))
+                        .cornerRadius(4)
                 }
             }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.primary.opacity(0.025))
+            .cornerRadius(8)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.8)
+            )
 
-            // Web Dashboard Link
+            // 5. Web Dashboard & Advanced Settings
             Button(action: {
                 if let url = URL(string: "http://127.0.0.1:18765/history#settings") {
                     NSWorkspace.shared.open(url)
                 }
             }) {
-                HStack(spacing: 5) {
+                HStack(spacing: 6) {
                     Image(systemName: "slider.horizontal.3")
-                        .font(.system(size: 10))
+                        .font(.system(size: 9))
+                        .foregroundColor(state.hudAccentColor)
                     Text("Web Dashboard & Advanced Settings")
-                        .font(.system(size: 9.5, weight: .medium))
+                        .font(.system(size: 8.5, weight: .medium))
+                        .foregroundColor(.primary.opacity(0.85))
                     Spacer()
                     Image(systemName: "arrow.up.right")
-                        .font(.system(size: 8))
+                        .font(.system(size: 7.5))
+                        .foregroundColor(.secondary)
                 }
-                .foregroundColor(.primary.opacity(0.9))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background(Color.primary.opacity(0.06))
-                .cornerRadius(5)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 6)
+                .background(Color.primary.opacity(0.025))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7)
+                        .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.8)
+                )
+                .cornerRadius(7)
             }
             .buttonStyle(.plain)
+            .focusable(false)
 
             Spacer(minLength: 0)
             Divider().opacity(0.12)
@@ -5282,22 +5569,24 @@ struct SettingsTabPane: View {
                 Button(action: { restartAppAndDaemon() }) {
                     HStack(spacing: 3) {
                         Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 8))
+                            .font(.system(size: 7.5))
                         Text("Restart Velox")
                     }
-                    .font(.system(size: 9, weight: .medium))
+                    .font(.system(size: 8.5, weight: .medium))
                     .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
+                .focusable(false)
 
                 Spacer()
 
                 Button(action: { NSApp.terminate(nil) }) {
                     Text("Quit Velox")
-                        .font(.system(size: 9, weight: .regular))
+                        .font(.system(size: 8.5, weight: .regular))
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
+                .focusable(false)
             }
         }
     }
@@ -5329,140 +5618,6 @@ struct SettingsTabPane: View {
     }
 }
 
-struct ShortcutChip: View {
-    let id: String
-    let label: String
-    @ObservedObject var state = AppState.shared
-
-    var body: some View {
-        Button(action: { HotkeyManager.shared.setShortcut(id) }) {
-            Text(label)
-                .font(.system(size: 9, weight: state.activeShortcut == id ? .semibold : .regular))
-                .foregroundColor(state.activeShortcut == id ? .primary : .secondary)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
-                .background(state.activeShortcut == id ? Color.primary.opacity(0.12) : Color.primary.opacity(0.04))
-                .cornerRadius(4)
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-struct MascotChip: View {
-    let id: String
-    let icon: String
-    let label: String
-    @ObservedObject var state = AppState.shared
-
-    var isSelected: Bool {
-        state.hudCharacter.lowercased() == id.lowercased()
-    }
-
-    var body: some View {
-        Button(action: {
-            state.hudCharacter = id
-            state.saveConfigToDisk()
-            FloatingHUDController.shared.show()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                if !AppState.shared.isRecording && !AppState.shared.isProcessing {
-                    FloatingHUDController.shared.hide()
-                }
-            }
-        }) {
-            HStack(spacing: 3) {
-                Text(icon)
-                    .font(.system(size: 10))
-                Text(label)
-                    .font(.system(size: 9, weight: isSelected ? .semibold : .regular))
-            }
-            .lineLimit(1)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 3.5)
-            .frame(maxWidth: .infinity)
-            .background(isSelected ? Color.primary.opacity(0.14) : Color.primary.opacity(0.04))
-            .foregroundColor(isSelected ? .primary : .secondary)
-            .cornerRadius(4)
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-struct ListeningStyleChip: View {
-    let id: String
-    let icon: String
-    let label: String
-    @ObservedObject var state = AppState.shared
-
-    var isSelected: Bool {
-        state.listeningStyle.lowercased() == id.lowercased()
-    }
-
-    var body: some View {
-        Button(action: {
-            state.listeningStyle = id
-            state.saveConfigToDisk()
-            FloatingHUDController.shared.show()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                if !AppState.shared.isRecording && !AppState.shared.isProcessing && !AppState.shared.alwaysShowCompanion {
-                    FloatingHUDController.shared.hide()
-                }
-            }
-        }) {
-            HStack(spacing: 3) {
-                Image(systemName: icon)
-                    .font(.system(size: 8))
-                Text(label)
-                    .font(.system(size: 8.5, weight: isSelected ? .semibold : .regular))
-            }
-            .lineLimit(1)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 3.5)
-            .frame(maxWidth: .infinity)
-            .background(isSelected ? Color.primary.opacity(0.14) : Color.primary.opacity(0.04))
-            .foregroundColor(isSelected ? .primary : .secondary)
-            .cornerRadius(4)
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-struct PositionPresetChip: View {
-    let id: String
-    let icon: String
-    let label: String
-    @ObservedObject var state = AppState.shared
-
-    var isSelected: Bool {
-        if id == "left" { return state.hudPosition == "left" || state.hudPosition == "bottom_left" }
-        if id == "right" { return state.hudPosition == "right" || state.hudPosition == "bottom_right" }
-        return state.hudPosition == id
-    }
-
-    var body: some View {
-        Button(action: {
-            state.hudPosition = id
-            state.hudYOffset = 0.0
-            state.saveConfigToDisk()
-            FloatingHUDController.shared.updatePosition(animated: true)
-        }) {
-            HStack(spacing: 3) {
-                Image(systemName: icon)
-                    .font(.system(size: 8.5))
-                Text(label)
-                    .font(.system(size: 9, weight: isSelected ? .semibold : .regular))
-            }
-            .lineLimit(1)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 3.5)
-            .frame(maxWidth: .infinity)
-            .background(isSelected ? Color.primary.opacity(0.14) : Color.primary.opacity(0.04))
-            .foregroundColor(isSelected ? .primary : .secondary)
-            .cornerRadius(4)
-        }
-        .buttonStyle(.plain)
-    }
-}
-
 // MARK: - App Delegate
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static var shared: AppDelegate!
@@ -5482,7 +5637,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let p = NSPopover()
-        p.contentSize = NSSize(width: 350, height: 330)
+        p.contentSize = NSSize(width: 410, height: 385)
         p.behavior = .transient
         p.contentViewController = NSHostingController(rootView: MenuBarControlCenterView())
         self.popover = p
@@ -5503,6 +5658,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func showPopover() {
         guard let button = statusItem.button else { return }
         AppState.shared.refreshPermissions()
+        AppState.shared.refreshAudioDevices()
         if !popover.isShown {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         }
