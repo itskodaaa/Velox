@@ -2913,6 +2913,21 @@ struct UnpastedTextCardView: View {
                 .truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
+            // Theme-aware button contrast styling
+            let isMonochrome = state.hudColor == "monochrome"
+            let pasteBg: Color = {
+                if isMonochrome {
+                    return isDark ? Color(white: 0.95) : Color(white: 0.14)
+                }
+                return state.hudAccentColor
+            }()
+            let pasteFg: Color = {
+                if isMonochrome {
+                    return isDark ? Color.black.opacity(0.92) : Color.white
+                }
+                return .white
+            }()
+
             // Two clean action buttons: Copy & Paste
             HStack(spacing: 5) {
                 // 1. Copy Button
@@ -2955,10 +2970,10 @@ struct UnpastedTextCardView: View {
                             .font(.system(size: 9, weight: .bold, design: .rounded))
                             .fixedSize(horizontal: true, vertical: false)
                     }
-                    .foregroundColor(.white)
+                    .foregroundColor(pasteFg)
                     .padding(.horizontal, 9)
                     .padding(.vertical, 4.5)
-                    .background(state.hudAccentColor)
+                    .background(pasteBg)
                     .cornerRadius(6)
                 }
                 .buttonStyle(.plain)
