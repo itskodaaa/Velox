@@ -54,6 +54,8 @@ DEFAULT_CONFIG = {
     "hud_character": "gearbot", # "gearbot", "neko", "luna", "kuro", "custom"
     "hud_color": "amber",      # "amber", "rose", "emerald", "cyan", "purple", "monochrome"
     "hud_listening_style": "morph", # "morph", "character", "waveform"
+    "app_theme": "system",          # "system", "dark", "light"
+    "selected_mic": "System Default",
 }
 
 

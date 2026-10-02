@@ -2,9 +2,17 @@ import AppKit
 import AVFoundation
 import Carbon.HIToolbox
 import Combine
+import CoreAudio
 import Foundation
 import SwiftUI
 import UserNotifications
+
+// MARK: - Audio Input Device
+struct AudioInputDevice: Identifiable, Hashable {
+    let id: String
+    let name: String
+    let deviceID: AudioDeviceID?
+}
 
 // MARK: - Control Center Tab Navigation
 enum ControlCenterTab: String, CaseIterable {
@@ -38,7 +46,8 @@ final class AppState: ObservableObject {
     @Published var isAccessibilityGranted: Bool = AXIsProcessTrusted()
     @Published var isMicrophoneGranted: Bool = (AVCaptureDevice.authorizationStatus(for: .audio) == .authorized)
     @Published var currentMicName: String = AVCaptureDevice.default(for: .audio)?.localizedName ?? "Default Microphone"
-    @Published var selectedMicDevice: String = ":default"
+    @AppStorage("selected_mic") var selectedMicName: String = "System Default"
+    @Published var availableMicDevices: [AudioInputDevice] = []
 
     // Menu Bar Control Center Active Tab
     @Published var activeTab: ControlCenterTab = .dictate
@@ -213,6 +222,7 @@ final class AppState: ObservableObject {
 
     private init() {
         loadConfigFromDisk()
+        refreshAudioDevices()
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
@@ -258,7 +268,9 @@ final class AppState: ObservableObject {
         if let hyoff = json["hud_y_offset"] as? Double { self.hudYOffset = hyoff }
         if let lstyle = json["hud_listening_style"] as? String, !lstyle.isEmpty { self.listeningStyle = lstyle }
         if let theme = json["app_theme"] as? String, !theme.isEmpty { self.appTheme = theme }
+        if let mic = json["selected_mic"] as? String, !mic.isEmpty { self.selectedMicName = mic }
         applyTheme()
+        refreshAudioDevices()
         refreshOpenRouterBalance()
     }
 
@@ -301,6 +313,7 @@ final class AppState: ObservableObject {
         payload["hud_y_offset"] = self.hudYOffset
         payload["hud_listening_style"] = self.listeningStyle
         payload["app_theme"] = self.appTheme
+        payload["selected_mic"] = self.selectedMicName
 
         if let data = try? JSONSerialization.data(withJSONObject: payload, options: .prettyPrinted) {
             try? data.write(to: configURL)
@@ -343,12 +356,97 @@ final class AppState: ObservableObject {
         if self.isMicrophoneGranted != micAuth {
             self.isMicrophoneGranted = micAuth
         }
-        let micName = AVCaptureDevice.default(for: .audio)?.localizedName ?? "Default Microphone"
-        if self.currentMicName != micName {
-            self.currentMicName = micName
-        }
+        updateCurrentMicName()
         if trusted && !CompanionTrackerManager.shared.isRunning {
             CompanionTrackerManager.shared.start()
+        }
+    }
+
+    func refreshAudioDevices() {
+        var devices: [AudioInputDevice] = []
+
+        var propSize: UInt32 = 0
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let status = AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &propSize)
+        if status == noErr {
+            let count = Int(propSize) / MemoryLayout<AudioDeviceID>.size
+            var deviceIDs = [AudioDeviceID](repeating: 0, count: count)
+            AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &propSize, &deviceIDs)
+
+            for devID in deviceIDs {
+                var streamAddress = AudioObjectPropertyAddress(
+                    mSelector: kAudioDevicePropertyStreams,
+                    mScope: kAudioDevicePropertyScopeInput,
+                    mElement: kAudioObjectPropertyElementMain
+                )
+                var streamSize: UInt32 = 0
+                AudioObjectGetPropertyDataSize(devID, &streamAddress, 0, nil, &streamSize)
+                if streamSize > 0 {
+                    var nameAddress = AudioObjectPropertyAddress(
+                        mSelector: kAudioDevicePropertyDeviceNameCFString,
+                        mScope: kAudioObjectPropertyScopeGlobal,
+                        mElement: kAudioObjectPropertyElementMain
+                    )
+                    var devName: Unmanaged<CFString>?
+                    var nameSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+                    let err = AudioObjectGetPropertyData(devID, &nameAddress, 0, nil, &nameSize, &devName)
+                    if err == noErr, let name = devName?.takeRetainedValue() as String? {
+                        devices.append(AudioInputDevice(id: "\(devID)", name: name, deviceID: devID))
+                    }
+                }
+            }
+        }
+
+        DispatchQueue.main.async {
+            self.availableMicDevices = devices
+            self.updateCurrentMicName()
+            if !self.selectedMicName.isEmpty && self.selectedMicName != "System Default" {
+                self.applyCoreAudioDevice(name: self.selectedMicName)
+            }
+        }
+    }
+
+    func selectAudioDevice(name: String) {
+        self.selectedMicName = name
+        saveConfigToDisk()
+        if name != "System Default" && !name.isEmpty {
+            applyCoreAudioDevice(name: name)
+        }
+        updateCurrentMicName()
+    }
+
+    private func applyCoreAudioDevice(name: String) {
+        if let dev = availableMicDevices.first(where: { $0.name == name }), let devID = dev.deviceID {
+            var targetID = devID
+            let propSize = UInt32(MemoryLayout<AudioDeviceID>.size)
+            var address = AudioObjectPropertyAddress(
+                mSelector: kAudioHardwarePropertyDefaultInputDevice,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            AudioObjectSetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, propSize, &targetID)
+        }
+    }
+
+    func updateCurrentMicName() {
+        var defaultDevice: AudioDeviceID = 0
+        var propSize = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let status = AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &propSize, &defaultDevice)
+        if status == noErr, let dev = availableMicDevices.first(where: { $0.deviceID == defaultDevice }) {
+            self.currentMicName = dev.name
+        } else if let def = AVCaptureDevice.default(for: .audio) {
+            self.currentMicName = def.localizedName
+        } else {
+            self.currentMicName = "Default Microphone"
         }
     }
 
@@ -572,10 +670,11 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
     private func startFfmpegFallback() {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/opt/homebrew/bin/ffmpeg")
+        let micTarget = (AppState.shared.selectedMicName.isEmpty || AppState.shared.selectedMicName == "System Default") ? ":default" : ":\(AppState.shared.selectedMicName)"
         p.arguments = [
             "-y",
             "-f", "avfoundation",
-            "-i", ":default",
+            "-i", micTarget,
             "-ar", "16000",
             "-ac", "1",
             recordPath,
@@ -2902,6 +3001,37 @@ final class FloatingHUDController {
         posSubmenuItem.submenu = posMenu
         menu.addItem(posSubmenuItem)
 
+        // 5. Microphone Input Submenu
+        let micMenu = NSMenu()
+        let sysDefaultItem = NSMenuItem(title: "System Default (\(AppState.shared.currentMicName))", action: #selector(contextSelectMic(_:)), keyEquivalent: "")
+        sysDefaultItem.target = self
+        sysDefaultItem.representedObject = "System Default"
+        if AppState.shared.selectedMicName.isEmpty || AppState.shared.selectedMicName == "System Default" {
+            sysDefaultItem.state = .on
+        }
+        micMenu.addItem(sysDefaultItem)
+
+        if !AppState.shared.availableMicDevices.isEmpty {
+            micMenu.addItem(NSMenuItem.separator())
+            for dev in AppState.shared.availableMicDevices {
+                let item = NSMenuItem(title: dev.name, action: #selector(contextSelectMic(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = dev.name
+                if AppState.shared.selectedMicName == dev.name {
+                    item.state = .on
+                }
+                micMenu.addItem(item)
+            }
+        }
+        micMenu.addItem(NSMenuItem.separator())
+        let rescanItem = NSMenuItem(title: "🔄 Rescan Audio Devices", action: #selector(contextRescanMics), keyEquivalent: "")
+        rescanItem.target = self
+        micMenu.addItem(rescanItem)
+
+        let micSubmenuItem = NSMenuItem(title: "Microphone Input", action: nil, keyEquivalent: "")
+        micSubmenuItem.submenu = micMenu
+        menu.addItem(micSubmenuItem)
+
         menu.addItem(NSMenuItem.separator())
 
         // 4. Control Center & Dashboard
@@ -2951,6 +3081,13 @@ final class FloatingHUDController {
         AppState.shared.hudYOffset = 0.0
         AppState.shared.saveConfigToDisk()
         updatePosition(animated: true)
+    }
+    @objc func contextSelectMic(_ sender: NSMenuItem) {
+        guard let micName = sender.representedObject as? String else { return }
+        AppState.shared.selectAudioDevice(name: micName)
+    }
+    @objc func contextRescanMics() {
+        AppState.shared.refreshAudioDevices()
     }
     @objc func contextOpenControlCenter() {
         AppDelegate.shared.showPopover()
@@ -3741,14 +3878,36 @@ struct DictateTabPane: View {
                     .font(.system(size: 11, weight: .medium, design: .rounded))
                     .foregroundColor(.primary.opacity(0.9))
 
-                HStack(spacing: 3) {
-                    Image(systemName: "mic.fill")
-                        .font(.system(size: 8))
-                    Text(state.currentMicName)
-                        .font(.system(size: 8.5))
-                        .lineLimit(1)
+                Menu {
+                    Button("System Default (\(state.currentMicName))") {
+                        state.selectAudioDevice(name: "System Default")
+                    }
+                    if !state.availableMicDevices.isEmpty {
+                        Divider()
+                        ForEach(state.availableMicDevices, id: \.id) { device in
+                            Button(device.name) {
+                                state.selectAudioDevice(name: device.name)
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "mic.fill")
+                            .font(.system(size: 8))
+                            .foregroundColor(state.hudAccentColor)
+                        Text(state.selectedMicName.isEmpty || state.selectedMicName == "System Default" ? state.currentMicName : state.selectedMicName)
+                            .font(.system(size: 8.5, weight: .medium))
+                            .lineLimit(1)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 6.5))
+                            .foregroundColor(.secondary.opacity(0.7))
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2.5)
+                    .background(Color.primary.opacity(0.04))
+                    .cornerRadius(4)
                 }
-                .foregroundColor(.secondary)
+                .menuStyle(.borderlessButton)
             }
 
             Spacer(minLength: 0)
@@ -4264,6 +4423,76 @@ struct SettingsTabPane: View {
                     ThemePresetChip(id: "dark", icon: "moon.stars.fill", label: "Premium Dark")
                     ThemePresetChip(id: "light", icon: "sun.max.fill", label: "Light")
                 }
+            }
+
+            // Microphone Input
+            VStack(alignment: .leading, spacing: 3) {
+                HStack {
+                    Image(systemName: "mic.fill")
+                        .font(.system(size: 8.5))
+                        .foregroundColor(state.hudAccentColor)
+                    Text("Microphone Input:")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Button(action: { state.refreshAudioDevices() }) {
+                        HStack(spacing: 2) {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                                .font(.system(size: 7))
+                            Text("Refresh")
+                                .font(.system(size: 8))
+                        }
+                        .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Rescan connected audio devices")
+                }
+
+                Menu {
+                    Button(action: {
+                        state.selectAudioDevice(name: "System Default")
+                    }) {
+                        HStack {
+                            Text("System Default (\(state.currentMicName))")
+                            if state.selectedMicName.isEmpty || state.selectedMicName == "System Default" {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                    if !state.availableMicDevices.isEmpty {
+                        Divider()
+                        ForEach(state.availableMicDevices, id: \.id) { device in
+                            Button(action: {
+                                state.selectAudioDevice(name: device.name)
+                            }) {
+                                HStack {
+                                    Text(device.name)
+                                    if state.selectedMicName == device.name {
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(Color.green.opacity(0.85))
+                            .frame(width: 5, height: 5)
+                        Text(state.selectedMicName.isEmpty || state.selectedMicName == "System Default" ? "Default (\(state.currentMicName))" : state.selectedMicName)
+                            .font(.system(size: 9, weight: .medium))
+                            .lineLimit(1)
+                        Spacer()
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 7.5))
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 4)
+                    .background(Color.primary.opacity(0.05))
+                    .cornerRadius(5)
+                }
+                .menuStyle(.borderlessButton)
             }
 
             // Shortcuts
