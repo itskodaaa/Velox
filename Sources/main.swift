@@ -955,23 +955,13 @@ final class DictationService {
                 pasteboard.clearContents()
                 pasteboard.setString(finalText, forType: .string)
 
-                let targetBundle = self.lastExternalBundleId.isEmpty ? "com.google.antigravity" : self.lastExternalBundleId
-                let canPaste = self.canPasteIntoFocusedElement(bundleId: targetBundle)
-
-                if canPaste && AppState.shared.autoPaste {
+                if AppState.shared.autoPaste {
                     AppState.shared.statusText = "Pasted in \(Int(totalMs))ms ✓"
+                    FloatingHUDController.shared.expandForUnpastedCard(text: finalText, autoPasted: true)
                     self.performInfalliblePaste(finalText)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                        AppState.shared.statusText = ""
-                        if !AppState.shared.isRecording && !AppState.shared.isProcessing && !AppState.shared.showUnpastedCard {
-                            FloatingHUDController.shared.hide()
-                        }
-                    }
                 } else {
-                    print("[DictationService] Cursor not in text box (app: \(targetBundle)). Expanding unpasted recovery card.")
                     AppState.shared.statusText = "Copied to clipboard"
-                    NSSound(named: "Funk")?.play()
-                    FloatingHUDController.shared.expandForUnpastedCard(text: finalText, reason: "Cursor wasn't in text box")
+                    FloatingHUDController.shared.expandForUnpastedCard(text: finalText, autoPasted: false)
                 }
             }
         }.resume()
@@ -983,8 +973,10 @@ final class DictationService {
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
 
-        // 2. Hide Floating HUD pill and popover immediately
-        FloatingHUDController.shared.hide()
+        // 2. Close popover; hide HUD only if not in assistant card mode
+        if !AppState.shared.showUnpastedCard {
+            FloatingHUDController.shared.hide()
+        }
         AppDelegate.shared.closePopover()
 
         let bundleId = self.lastExternalBundleId.isEmpty ? "com.google.antigravity" : self.lastExternalBundleId
@@ -2509,7 +2501,7 @@ struct SnapGuideView: View {
     }
 }
 
-// MARK: - Unpasted Dictation Recovery & Copy Assist Card
+// MARK: - Unpasted Dictation Recovery & Quick Copy/Paste Assist Card
 struct UnpastedTextCardView: View {
     @ObservedObject var state = AppState.shared
     let isDark: Bool
@@ -2522,29 +2514,17 @@ struct UnpastedTextCardView: View {
                 .frame(width: 22, height: 22)
                 .padding(.leading, 10)
 
-            // Info & Preview
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 3) {
-                    Image(systemName: "cursorarrow.rays")
-                        .font(.system(size: 7.5, weight: .bold))
-                        .foregroundColor(Color.orange)
-                    Text("No text box • Saved to clipboard")
-                        .font(.system(size: 7.5, weight: .bold, design: .rounded))
-                        .foregroundColor(Color.orange)
-                }
+            // Text Preview Snippet
+            Text("\"\(state.unpastedText)\"")
+                .font(.system(size: 9.5, weight: .medium))
+                .foregroundColor(isDark ? Color.white.opacity(0.92) : Color.black.opacity(0.88))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-                Text("\"\(state.unpastedText)\"")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(isDark ? Color.white.opacity(0.92) : Color.black.opacity(0.88))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: 130, alignment: .leading)
-            }
-
-            Spacer(minLength: 2)
-
-            // Buttons: Copy & Paste & Dismiss
-            HStack(spacing: 4) {
+            // Two clean action buttons: Copy & Paste
+            HStack(spacing: 5) {
+                // 1. Copy Button
                 Button(action: {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(state.unpastedText, forType: .string)
@@ -2554,20 +2534,22 @@ struct UnpastedTextCardView: View {
                         FloatingHUDController.shared.collapseUnpastedCard()
                     }
                 }) {
-                    HStack(spacing: 2.5) {
+                    HStack(spacing: 3) {
                         Image(systemName: state.isCopiedFeedback ? "checkmark" : "doc.on.doc")
-                            .font(.system(size: 7, weight: .bold))
+                            .font(.system(size: 8, weight: .bold))
                         Text(state.isCopiedFeedback ? "Copied" : "Copy")
-                            .font(.system(size: 8, weight: .bold, design: .rounded))
+                            .font(.system(size: 9, weight: .bold, design: .rounded))
+                            .fixedSize(horizontal: true, vertical: false)
                     }
-                    .foregroundColor(state.isCopiedFeedback ? .green : .white)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3.5)
-                    .background(state.isCopiedFeedback ? Color.green.opacity(0.2) : state.hudAccentColor)
-                    .cornerRadius(5)
+                    .foregroundColor(state.isCopiedFeedback ? .green : (isDark ? Color.white.opacity(0.92) : Color.black.opacity(0.9)))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4.5)
+                    .background(state.isCopiedFeedback ? Color.green.opacity(0.18) : (isDark ? Color.white.opacity(0.12) : Color.black.opacity(0.08)))
+                    .cornerRadius(6)
                 }
                 .buttonStyle(.plain)
 
+                // 2. Paste Button
                 Button(action: {
                     let textToPaste = state.unpastedText
                     FloatingHUDController.shared.collapseUnpastedCard()
@@ -2575,28 +2557,29 @@ struct UnpastedTextCardView: View {
                         DictationService.shared.performInfalliblePaste(textToPaste)
                     }
                 }) {
-                    HStack(spacing: 2) {
+                    HStack(spacing: 3) {
                         Image(systemName: "arrow.right.doc.on.clipboard")
-                            .font(.system(size: 7, weight: .bold))
+                            .font(.system(size: 8, weight: .bold))
                         Text("Paste")
-                            .font(.system(size: 8, weight: .bold, design: .rounded))
+                            .font(.system(size: 9, weight: .bold, design: .rounded))
+                            .fixedSize(horizontal: true, vertical: false)
                     }
-                    .foregroundColor(isDark ? Color.white.opacity(0.85) : Color.black.opacity(0.85))
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 3.5)
-                    .background(Color.primary.opacity(0.08))
-                    .cornerRadius(5)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4.5)
+                    .background(state.hudAccentColor)
+                    .cornerRadius(6)
                 }
                 .buttonStyle(.plain)
 
-                // Dismiss ✕
+                // 3. Dismiss ✕
                 Button(action: {
                     FloatingHUDController.shared.collapseUnpastedCard()
                 }) {
                     Image(systemName: "xmark")
                         .font(.system(size: 6.5, weight: .bold))
                         .foregroundColor(.secondary)
-                        .padding(3.5)
+                        .frame(width: 16, height: 16)
                         .background(Color.primary.opacity(0.06))
                         .clipShape(Circle())
                 }
@@ -2604,7 +2587,7 @@ struct UnpastedTextCardView: View {
             }
             .padding(.trailing, 8)
         }
-        .frame(height: 44)
+        .frame(height: 38)
     }
 }
 
@@ -2649,7 +2632,7 @@ struct FloatingHUDView: View {
 
                     UnpastedTextCardView(state: state, isDark: isDark, time: time)
                 }
-                .frame(width: 280, height: 48)
+                .frame(width: 320, height: 42)
                 .transition(.asymmetric(
                     insertion: .scale(scale: 0.82).combined(with: .opacity),
                     removal: .scale(scale: 0.82).combined(with: .opacity)
@@ -3035,7 +3018,7 @@ final class FloatingHUDController {
 
     func panelSize(for position: String) -> NSSize {
         if AppState.shared.showUnpastedCard {
-            return NSSize(width: 290, height: 56)
+            return NSSize(width: 330, height: 50)
         }
         let size = AppState.shared.hudSize
         if position == "left" || position == "right" {
@@ -3066,9 +3049,8 @@ final class FloatingHUDController {
         p.invalidateShadow()
     }
 
-    func expandForUnpastedCard(text: String, reason: String = "Cursor wasn't in text box") {
+    func expandForUnpastedCard(text: String, autoPasted: Bool = false) {
         AppState.shared.unpastedText = text
-        AppState.shared.unpastedReason = reason
         AppState.shared.isCopiedFeedback = false
         withAnimation(.spring(response: 0.32, dampingFraction: 0.72)) {
             AppState.shared.showUnpastedCard = true
@@ -3083,8 +3065,10 @@ final class FloatingHUDController {
             p.animator().setFrame(targetFrame, display: true)
         }
 
-        // Auto collapse after 10 seconds if user does not interact
-        DispatchQueue.main.asyncAfter(deadline: .now() + 10.0) { [weak self] in
+        // If autoPasted, gently collapse after 3.8s so user can keep typing freely!
+        // If not autoPasted (or manual), give user 10s to click Paste or Copy!
+        let autoDismissDelay: Double = autoPasted ? 3.8 : 10.0
+        DispatchQueue.main.asyncAfter(deadline: .now() + autoDismissDelay) { [weak self] in
             if AppState.shared.showUnpastedCard && AppState.shared.unpastedText == text {
                 self?.collapseUnpastedCard()
             }
