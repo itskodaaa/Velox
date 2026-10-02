@@ -3244,12 +3244,19 @@ final class CompanionTrackerManager {
         let mouseLoc = NSEvent.mouseLocation
         let dx = mouseLoc.x - hudCenter.x
         let dy = mouseLoc.y - hudCenter.y
-        let distance = hypot(dx, dy)
 
-        // Proximity bubble: 160 points (natural interactive range around HUD)
-        if distance < 160.0 {
-            let normalizedX = max(-1.0, min(1.0, Double(dx / 110.0)))
-            let normalizedY = max(-1.0, min(1.0, Double(dy / 110.0)))
+        // Dynamic tracking boundary: horizontal tracking width is 2/3 of screen height
+        let targetScreen = FloatingHUDController.shared.currentTargetScreen()
+        let screenHeight = targetScreen.frame.height > 0 ? targetScreen.frame.height : (NSScreen.main?.frame.height ?? 900.0)
+        let trackingWidth = screenHeight * (2.0 / 3.0)
+        let trackingHeight = screenHeight
+
+        // Proximity check: active across 2/3 screen height horizontally & full screen height vertically
+        if abs(dx) <= trackingWidth && abs(dy) <= trackingHeight {
+            let divisorX = max(100.0, trackingWidth * 0.85)
+            let divisorY = max(180.0, screenHeight * 0.65)
+            let normalizedX = max(-1.0, min(1.0, Double(dx / divisorX)))
+            let normalizedY = max(-1.0, min(1.0, Double(dy / divisorY)))
 
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
