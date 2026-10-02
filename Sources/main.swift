@@ -144,7 +144,7 @@ final class AppState: ObservableObject {
     // HUD Customization
     @AppStorage("hud_position") var hudPosition: String = "bottom_center" // "bottom_left", "bottom_center", "bottom_right"
     @AppStorage("hud_size") var hudSize: String = "compact"         // "mini", "compact", "spacious"
-    @AppStorage("hud_character") var hudCharacter: String = "gearbot" // "gearbot", "neko", "luna", "kuro", "custom"
+    @AppStorage("hud_character") var hudCharacter: String = "axolotl" // "axolotl", "bongo", "neko", "kuro", "gearbot", "custom"
     @AppStorage("hud_color") var hudColor: String = "amber"         // "amber", "rose", "emerald", "cyan", "purple", "monochrome"
     @AppStorage("hud_always_show") var alwaysShowCompanion: Bool = true // Desktop pet companion mode
     @AppStorage("hud_y_offset") var hudYOffset: Double = 0.0        // User nudge from dock/bottom
@@ -261,10 +261,10 @@ final class AppState: ObservableObject {
         }
         if let hsize = json["hud_size"] as? String, !hsize.isEmpty { self.hudSize = hsize }
         if let hchar = json["hud_character"] as? String, !hchar.isEmpty {
-            if hchar == "birb" || hchar == "parakeet" {
-                self.hudCharacter = "luna"
+            if hchar == "birb" || hchar == "parakeet" || hchar == "luna" {
+                self.hudCharacter = "axolotl"
             } else if hchar == "orb_gears" || hchar == "orb" {
-                self.hudCharacter = "kuro"
+                self.hudCharacter = "bongo"
             } else {
                 self.hudCharacter = hchar
             }
@@ -1755,8 +1755,30 @@ struct NekoCharacterView: View {
     }
 }
 
-// MARK: - 3. Luna Character (Gentle Celestial Spirit)
-struct LunaCharacterView: View {
+// MARK: - 3. Axolotl Character (Acoustic Feathery Gills & Swimming Companion)
+struct AxolotlGillPlume: View {
+    let angle: Double
+    let length: Double
+    let color: Color
+    let tipColor: Color
+    let isFlipped: Bool
+
+    var body: some View {
+        Capsule()
+            .fill(
+                LinearGradient(
+                    colors: isFlipped ? [tipColor, color] : [color, tipColor],
+                    startPoint: isFlipped ? .leading : .trailing,
+                    endPoint: isFlipped ? .trailing : .leading
+                )
+            )
+            .frame(width: CGFloat(max(3.5, length)), height: 2.2)
+            .shadow(color: color.opacity(0.35), radius: 1)
+            .rotationEffect(.degrees(angle))
+    }
+}
+
+struct AxolotlCharacterView: View {
     let time: Double
     let isRecording: Bool
     let isProcessing: Bool
@@ -1778,36 +1800,39 @@ struct LunaCharacterView: View {
 
     var body: some View {
         let blinkPhase = sin(time * 1.5)
-        let isBlinking = blinkPhase > 0.96 && !isProcessing && !isDone && !isHappy && !isTimerUrgent
+        let isBlinking = blinkPhase > 0.95 && !isProcessing && !isDone && !isHappy && !isTimerUrgent
 
-        let floatBob: Double = {
+        // Underwater gentle swimming bob:
+        let swimBob: Double = {
             if isHappy {
-                return -3.0 + abs(sin(time * 14.0)) * -2.0
+                return -3.5 + abs(sin(time * 14.0)) * -2.5
+            } else if isRecording {
+                return -2.0 + sin(time * 6.0) * 1.5
             } else if isLookingAtTimer {
                 return -timerLookY * 1.5
             } else if isTimerUrgent {
-                return -2.0 + sin(time * 14.0) * 2.2
+                return -2.0 + sin(time * 16.0) * 2.0
             } else if isTyping {
-                return -0.8 // Calm attentive hovering
+                return -1.0 + sin(time * 4.0) * 0.8
             } else if isTimerLow {
-                return sin(time * 10.0) * 1.8
+                return sin(time * 10.0) * 1.5
             }
-            return sin(time * 2.4) * 1.6
+            return sin(time * 2.2) * 1.8
         }()
 
         let bodyTilt: Double = {
             if isHappy {
-                return sin(time * 16.0) * 8.0
+                return sin(time * 14.0) * 8.0
             } else if isLookingAtTimer {
                 return timerLookX * 7.5
             } else if isTyping {
-                return -3.0 // Gentle soft tilt
+                return -3.5 + sin(time * 4.0) * 1.2
             } else if isTimerLow {
-                return sin(time * 24.0) * (isTimerUrgent ? 1.6 : 0.8)
+                return sin(time * 20.0) * (isTimerUrgent ? 1.6 : 0.8)
             } else if isCursorNear {
                 return cursorLookX * 7.0
             }
-            return sin(time * 1.2) * 2.0
+            return sin(time * 1.8) * 2.5
         }()
 
         let (eyeOffsetX, eyeOffsetY): (CGFloat, CGFloat) = {
@@ -1816,7 +1841,7 @@ struct LunaCharacterView: View {
             } else if isLookingAtTimer {
                 return (CGFloat(timerLookX * 1.8), CGFloat(-timerLookY * 1.1))
             } else if isTyping {
-                return (-1.0, 0.7) // Gentle glance toward keyboard
+                return (-1.0, 0.8) // Downward attentive glance
             } else if isTimerUrgent {
                 return (CGFloat(sin(time * 8.0) * 1.4), 0.0)
             } else if isCursorNear {
@@ -1825,117 +1850,463 @@ struct LunaCharacterView: View {
             return (0.0, 0.0)
         }()
 
-        let wispSpeed = isTimerUrgent ? 14.0 : 3.5
+        // Voice gill flare expansion & ripple
+        let voiceMultiplier = isRecording ? (1.0 + Double(audioLevel) * 1.4) : 1.0
+        let gillColor = Color(red: 0.98, green: 0.42, blue: 0.60)
+        let gillTipColor = Color(red: 1.0, green: 0.65, blue: 0.78)
+        let bodyBaseColor = Color(red: 1.0, green: 0.78, blue: 0.85)
 
-        VStack(spacing: -1) {
-            // Little floating star crown / celestial wisp on top
-            Circle()
-                .fill(accentColor.opacity(0.95))
-                .frame(width: 3.2, height: 3.2)
-                .shadow(color: accentColor.opacity(0.8), radius: 2)
-                .offset(y: sin(time * wispSpeed) * 1.5)
+        ZStack {
+            // 1. External Feathery Gills (3 pairs: top, middle, bottom on left & right)
+            HStack(spacing: 14) {
+                // Left 3 Gills
+                VStack(spacing: 2.0) {
+                    AxolotlGillPlume(
+                        angle: -26.0 + (isTyping ? sin(time * 14.0) * 4.0 : sin(time * 3.0) * 3.0),
+                        length: 6.8 * voiceMultiplier,
+                        color: gillColor,
+                        tipColor: gillTipColor,
+                        isFlipped: true
+                    )
+                    AxolotlGillPlume(
+                        angle: -8.0 + (isTyping ? sin(time * 16.0 + 1.0) * 5.0 : sin(time * 3.0 + 1.0) * 4.0),
+                        length: 8.2 * voiceMultiplier,
+                        color: gillColor,
+                        tipColor: gillTipColor,
+                        isFlipped: true
+                    )
+                    AxolotlGillPlume(
+                        angle: 14.0 + (isTyping ? sin(time * 14.0 + 2.0) * 4.0 : sin(time * 3.0 + 2.0) * 3.0),
+                        length: 6.2 * voiceMultiplier,
+                        color: gillColor,
+                        tipColor: gillTipColor,
+                        isFlipped: true
+                    )
+                }
 
+                // Right 3 Gills
+                VStack(spacing: 2.0) {
+                    AxolotlGillPlume(
+                        angle: 26.0 + (isTyping ? -sin(time * 14.0) * 4.0 : -sin(time * 3.0) * 3.0),
+                        length: 6.8 * voiceMultiplier,
+                        color: gillColor,
+                        tipColor: gillTipColor,
+                        isFlipped: false
+                    )
+                    AxolotlGillPlume(
+                        angle: 8.0 + (isTyping ? -sin(time * 16.0 + 1.0) * 5.0 : -sin(time * 3.0 + 1.0) * 4.0),
+                        length: 8.2 * voiceMultiplier,
+                        color: gillColor,
+                        tipColor: gillTipColor,
+                        isFlipped: false
+                    )
+                    AxolotlGillPlume(
+                        angle: -14.0 + (isTyping ? -sin(time * 14.0 + 2.0) * 4.0 : -sin(time * 3.0 + 2.0) * 3.0),
+                        length: 6.2 * voiceMultiplier,
+                        color: gillColor,
+                        tipColor: gillTipColor,
+                        isFlipped: false
+                    )
+                }
+            }
+            .offset(y: -1)
+
+            // 2. Axolotl Chubby Cute Head & Body
             ZStack {
-                // Ethereal Ghost/Wisp Body with soft gradient
-                RoundedRectangle(cornerRadius: 8)
+                RoundedRectangle(cornerRadius: 9)
                     .fill(
                         LinearGradient(
-                            colors: [accentColor.opacity(0.85), Color(white: 0.15).opacity(0.9)],
+                            colors: [
+                                Color(red: 1.0, green: 0.83, blue: 0.89),
+                                bodyBaseColor
+                            ],
                             startPoint: .top,
                             endPoint: .bottom
                         )
                     )
-                    .frame(width: 18, height: 16)
+                    .frame(width: 19, height: 16)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.white.opacity(0.35), lineWidth: 0.7)
+                        RoundedRectangle(cornerRadius: 9)
+                            .stroke(Color.white.opacity(0.65), lineWidth: 0.7)
                     )
-                    .shadow(color: accentColor.opacity(isHovered || isCursorNear ? 0.5 : 0.2), radius: 3)
+                    .shadow(color: gillColor.opacity(isHovered || isCursorNear ? 0.35 : 0.15), radius: 2.5)
 
-                // Face Features
-                if isDone || isHappy {
-                    HStack(spacing: 2.5) {
-                        Text("^")
-                            .font(.system(size: 8, weight: .bold))
-                            .foregroundColor(.white)
-                        Circle().fill(Color.pink.opacity(0.9)).frame(width: 2.2, height: 1.6)
-                        Text("^")
-                            .font(.system(size: 8, weight: .bold))
-                            .foregroundColor(.white)
+                // 3. Face Features
+                if isHappy || isDone {
+                    VStack(spacing: 1.0) {
+                        HStack(spacing: 3) {
+                            Text("^")
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundColor(Color(red: 0.4, green: 0.15, blue: 0.25))
+                            Circle()
+                                .fill(Color(red: 1.0, green: 0.45, blue: 0.65))
+                                .frame(width: 2.4, height: 1.8)
+                            Text("^")
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundColor(Color(red: 0.4, green: 0.15, blue: 0.25))
+                        }
+                        Circle()
+                            .trim(from: 0.0, to: 0.5)
+                            .stroke(Color(red: 0.45, green: 0.15, blue: 0.25), lineWidth: 1.0)
+                            .frame(width: 4.5, height: 3)
+                            .rotationEffect(.degrees(180))
+                            .offset(y: -1)
                     }
                 } else if isProcessing {
                     HStack(spacing: 3) {
-                        Circle().fill(Color.white).frame(width: 2.5, height: 2.5)
+                        Circle()
+                            .fill(gillColor)
+                            .frame(width: 2.8, height: 2.8)
                             .scaleEffect(0.6 + max(0, sin(time * 6.0)) * 0.6)
-                        Circle().fill(Color.white).frame(width: 2.5, height: 2.5)
-                            .scaleEffect(0.6 + max(0, sin(time * 6.0 + 1.0)) * 0.6)
+                        Circle()
+                            .fill(gillColor)
+                            .frame(width: 2.8, height: 2.8)
+                            .scaleEffect(0.6 + max(0, sin(time * 6.0 + 1.2)) * 0.6)
                     }
                 } else {
                     VStack(spacing: 0.5) {
-                        // Big starry anime wisp eyes
-                        HStack(spacing: 4) {
+                        // Wide Expressive Glistening Eyes
+                        HStack(spacing: 4.5) {
+                            // Left Eye
                             ZStack {
-                                Capsule()
-                                    .fill(Color.black.opacity(0.88))
-                                    .frame(width: 3.6, height: 5.2)
+                                Circle()
+                                    .fill(Color(red: 0.18, green: 0.08, blue: 0.14))
+                                    .frame(width: 4.2, height: 4.8)
                                     .scaleEffect(y: isBlinking ? 0.15 : 1.0)
                                     .offset(x: eyeOffsetX, y: eyeOffsetY)
 
                                 if !isBlinking {
                                     Circle()
                                         .fill(Color.white)
-                                        .frame(width: 1.4, height: 1.4)
-                                        .offset(x: eyeOffsetX - 0.7, y: eyeOffsetY - 1.2)
+                                        .frame(width: 1.5, height: 1.5)
+                                        .offset(x: eyeOffsetX - 0.7, y: eyeOffsetY - 1.1)
+                                    Circle()
+                                        .fill(Color.white.opacity(0.85))
+                                        .frame(width: 0.8, height: 0.8)
+                                        .offset(x: eyeOffsetX + 0.9, y: eyeOffsetY + 1.0)
                                 }
                             }
 
+                            // Right Eye
                             ZStack {
-                                Capsule()
-                                    .fill(Color.black.opacity(0.88))
-                                    .frame(width: 3.6, height: 5.2)
+                                Circle()
+                                    .fill(Color(red: 0.18, green: 0.08, blue: 0.14))
+                                    .frame(width: 4.2, height: 4.8)
                                     .scaleEffect(y: isBlinking ? 0.15 : 1.0)
                                     .offset(x: eyeOffsetX, y: eyeOffsetY)
 
                                 if !isBlinking {
                                     Circle()
                                         .fill(Color.white)
-                                        .frame(width: 1.4, height: 1.4)
-                                        .offset(x: eyeOffsetX - 0.7, y: eyeOffsetY - 1.2)
+                                        .frame(width: 1.5, height: 1.5)
+                                        .offset(x: eyeOffsetX - 0.7, y: eyeOffsetY - 1.1)
+                                    Circle()
+                                        .fill(Color.white.opacity(0.85))
+                                        .frame(width: 0.8, height: 0.8)
+                                        .offset(x: eyeOffsetX + 0.9, y: eyeOffsetY + 1.0)
                                 }
                             }
                         }
 
-                        // Soft blushing cheeks
-                        HStack(spacing: 5) {
-                            Circle()
-                                .fill(Color.pink.opacity(isCursorNear || isTimerLow ? 0.90 : 0.45))
-                                .frame(width: 2.2, height: 1.4)
-                            Circle()
-                                .fill(Color.pink.opacity(isCursorNear || isTimerLow ? 0.90 : 0.45))
-                                .frame(width: 2.2, height: 1.4)
+                        // Rosy Cheek Blushes & Axolotl Smile
+                        ZStack {
+                            HStack(spacing: 6.5) {
+                                Circle()
+                                    .fill(Color(red: 1.0, green: 0.45, blue: 0.65).opacity(isCursorNear || isTimerLow ? 0.95 : 0.55))
+                                    .frame(width: 2.6, height: 1.6)
+                                Circle()
+                                    .fill(Color(red: 1.0, green: 0.45, blue: 0.65).opacity(isCursorNear || isTimerLow ? 0.95 : 0.55))
+                                    .frame(width: 2.6, height: 1.6)
+                            }
+
+                            if isRecording {
+                                Circle()
+                                    .stroke(Color(red: 0.45, green: 0.15, blue: 0.25), lineWidth: 0.9)
+                                    .frame(width: 2.4, height: 2.8)
+                                    .offset(y: 1.0)
+                            } else {
+                                Circle()
+                                    .trim(from: 0.0, to: 0.5)
+                                    .stroke(Color(red: 0.45, green: 0.15, blue: 0.25), lineWidth: 0.85)
+                                    .frame(width: 3.2, height: 2.2)
+                                    .rotationEffect(.degrees(180))
+                                    .offset(y: 0.2)
+                            }
                         }
-                        .offset(y: -0.5)
                     }
                 }
 
                 if isTimerUrgent {
                     Text("⚡")
                         .font(.system(size: 6))
-                        .offset(x: 8, y: -7 + sin(time * 8.0) * 1.2)
+                        .offset(x: 9, y: -7 + sin(time * 8.0) * 1.2)
                 } else if isTimerLow {
                     Text("💧")
                         .font(.system(size: 5.5))
-                        .offset(x: 7, y: -6 + sin(time * 6.0) * 1.0)
+                        .offset(x: 8, y: -6 + sin(time * 6.0) * 1.0)
                 }
             }
         }
         .rotationEffect(.degrees(bodyTilt))
-        .offset(y: CGFloat(floatBob))
+        .offset(y: CGFloat(swimBob))
         .animation(.spring(response: 0.28, dampingFraction: 0.72), value: isTyping)
         .animation(.spring(response: 0.26, dampingFraction: 0.75), value: isCursorNear)
         .animation(.spring(response: 0.26, dampingFraction: 0.75), value: isLookingAtTimer)
     }
 }
+
+// MARK: - 3b. Bongo Cat Character (Tapping Paws, Piano Desk, Expressive Typing Reactions)
+struct BongoCatCharacterView: View {
+    let time: Double
+    let isRecording: Bool
+    let isProcessing: Bool
+    let isDone: Bool
+    let audioLevel: Float
+    let accentColor: Color
+    var isHovered: Bool = false
+    var isHappy: Bool = false
+    var cursorLookX: Double = 0.0
+    var cursorLookY: Double = 0.0
+    var isCursorNear: Bool = false
+    var isTyping: Bool = false
+    var isFlowActive: Bool = false
+    var isLookingAtTimer: Bool = false
+    var isTimerLow: Bool = false
+    var isTimerUrgent: Bool = false
+    var timerLookX: Double = 0.0
+    var timerLookY: Double = 0.0
+
+    var body: some View {
+        let blinkPhase = sin(time * 1.6)
+        let isBlinking = blinkPhase > 0.95 && !isProcessing && !isDone && !isHappy && !isTimerUrgent
+
+        // Paw tapping alternating frequency:
+        let pawTapCycle = sin(time * 24.0)
+        let leftPawY: CGFloat = {
+            if isHappy {
+                return -3.0
+            } else if isRecording {
+                return -4.0 // Raised cheering paws!
+            } else if isTyping {
+                return pawTapCycle > 0 ? 2.5 : -1.5 // Alternating tap!
+            }
+            return 0.0
+        }()
+
+        let rightPawY: CGFloat = {
+            if isHappy {
+                return -3.0
+            } else if isRecording {
+                return -4.0
+            } else if isTyping {
+                return pawTapCycle <= 0 ? 2.5 : -1.5 // Opposite tap!
+            }
+            return 0.0
+        }()
+
+        let headBob: CGFloat = {
+            if isHappy {
+                return -2.5 + CGFloat(abs(sin(time * 14.0))) * -1.8
+            } else if isTyping {
+                return CGFloat(sin(time * 24.0) * 0.8) // Cute subtle head groove to typing rhythm!
+            } else if isTimerUrgent {
+                return -1.5 + CGFloat(abs(sin(time * 18.0))) * -1.5
+            }
+            return CGFloat(sin(time * 2.0) * 1.0)
+        }()
+
+        let headTilt: Double = {
+            if isHappy {
+                return sin(time * 14.0) * 6.0
+            } else if isLookingAtTimer {
+                return timerLookX * 6.0
+            } else if isTyping {
+                return -2.5 + sin(time * 6.0) * 1.5
+            } else if isCursorNear {
+                return cursorLookX * 6.0
+            }
+            return 0.0
+        }()
+
+        let (eyeOffsetX, eyeOffsetY): (CGFloat, CGFloat) = {
+            if isHappy {
+                return (0.0, 0.0)
+            } else if isLookingAtTimer {
+                return (CGFloat(timerLookX * 1.8), CGFloat(-timerLookY * 1.1))
+            } else if isTyping {
+                let sideEye = sin(time * 3.0) > 0.4 ? 1.2 : -0.8
+                return (CGFloat(sideEye), 0.9)
+            } else if isTimerUrgent {
+                return (CGFloat(sin(time * 8.0) * 1.4), 0.0)
+            } else if isCursorNear {
+                return (CGFloat(cursorLookX * 1.8), CGFloat(-cursorLookY * 1.1))
+            }
+            return (0.0, 0.0)
+        }()
+
+        VStack(spacing: -3.5) {
+            // Cat Ears with pink insides
+            HStack(spacing: 8) {
+                // Left Ear
+                ZStack {
+                    Path { p in
+                        p.move(to: CGPoint(x: 0, y: 7))
+                        p.addLine(to: CGPoint(x: 3.5, y: 0))
+                        p.addLine(to: CGPoint(x: 7, y: 7))
+                        p.closeSubpath()
+                    }
+                    .fill(Color.white)
+                    .frame(width: 7, height: 7)
+
+                    Path { p in
+                        p.move(to: CGPoint(x: 1.5, y: 6))
+                        p.addLine(to: CGPoint(x: 3.5, y: 2))
+                        p.addLine(to: CGPoint(x: 5.5, y: 6))
+                        p.closeSubpath()
+                    }
+                    .fill(Color(red: 1.0, green: 0.72, blue: 0.78))
+                    .frame(width: 7, height: 7)
+                }
+                .rotationEffect(.degrees(-10 + (isTyping ? sin(time * 14.0) * 3 : 0)))
+
+                // Right Ear
+                ZStack {
+                    Path { p in
+                        p.move(to: CGPoint(x: 0, y: 7))
+                        p.addLine(to: CGPoint(x: 3.5, y: 0))
+                        p.addLine(to: CGPoint(x: 7, y: 7))
+                        p.closeSubpath()
+                    }
+                    .fill(Color.white)
+                    .frame(width: 7, height: 7)
+
+                    Path { p in
+                        p.move(to: CGPoint(x: 1.5, y: 6))
+                        p.addLine(to: CGPoint(x: 3.5, y: 2))
+                        p.addLine(to: CGPoint(x: 5.5, y: 6))
+                        p.closeSubpath()
+                    }
+                    .fill(Color(red: 1.0, green: 0.72, blue: 0.78))
+                    .frame(width: 7, height: 7)
+                }
+                .rotationEffect(.degrees(10 - (isTyping ? sin(time * 14.0) * 3 : 0)))
+            }
+
+            // Head & Face Body
+            ZStack {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color(white: 0.98))
+                    .frame(width: 20, height: 16)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.black.opacity(0.12), lineWidth: 0.7)
+                    )
+                    .shadow(color: Color.black.opacity(0.1), radius: 2)
+
+                if isHappy || isDone {
+                    HStack(spacing: 3) {
+                        Text("^")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundColor(.black.opacity(0.85))
+                        Circle().fill(Color.pink.opacity(0.6)).frame(width: 2.2, height: 1.5)
+                        Text("^")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundColor(.black.opacity(0.85))
+                    }
+                } else if isProcessing {
+                    HStack(spacing: 2.5) {
+                        Circle().fill(Color.black.opacity(0.8)).frame(width: 2.5, height: 2.5)
+                            .scaleEffect(0.6 + max(0, sin(time * 6.0)) * 0.6)
+                        Circle().fill(Color.black.opacity(0.8)).frame(width: 2.5, height: 2.5)
+                            .scaleEffect(0.6 + max(0, sin(time * 6.0 + 1.0)) * 0.6)
+                    }
+                } else {
+                    VStack(spacing: 0.5) {
+                        HStack(spacing: 4.5) {
+                            // Left Eye
+                            ZStack {
+                                Circle()
+                                    .fill(Color.black.opacity(0.92))
+                                    .frame(width: 3.8, height: 4.5)
+                                    .scaleEffect(y: isBlinking ? 0.15 : 1.0)
+                                    .offset(x: eyeOffsetX, y: eyeOffsetY)
+
+                                if !isBlinking {
+                                    Circle()
+                                        .fill(Color.white)
+                                        .frame(width: 1.4, height: 1.4)
+                                        .offset(x: eyeOffsetX - 0.7, y: eyeOffsetY - 1.0)
+                                }
+                            }
+
+                            // Right Eye
+                            ZStack {
+                                Circle()
+                                    .fill(Color.black.opacity(0.92))
+                                    .frame(width: 3.8, height: 4.5)
+                                    .scaleEffect(y: isBlinking ? 0.15 : 1.0)
+                                    .offset(x: eyeOffsetX, y: eyeOffsetY)
+
+                                if !isBlinking {
+                                    Circle()
+                                        .fill(Color.white)
+                                        .frame(width: 1.4, height: 1.4)
+                                        .offset(x: eyeOffsetX - 0.7, y: eyeOffsetY - 1.0)
+                                }
+                            }
+                        }
+
+                        // Snout & :3 mouth
+                        HStack(spacing: 5) {
+                            Circle().fill(Color.pink.opacity(0.4)).frame(width: 2.0, height: 1.2)
+                            Text("w")
+                                .font(.system(size: 5.5, weight: .bold, design: .rounded))
+                                .foregroundColor(Color.black.opacity(0.75))
+                                .offset(y: -0.5)
+                            Circle().fill(Color.pink.opacity(0.4)).frame(width: 2.0, height: 1.2)
+                        }
+                    }
+                }
+
+                if isTimerUrgent {
+                    Text("💧")
+                        .font(.system(size: 5.5))
+                        .offset(x: 9, y: -6 + sin(time * 8.0) * 1.0)
+                }
+            }
+
+            // Tapping Paws
+            HStack(spacing: 7) {
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(Color.white)
+                    .frame(width: 5.5, height: 4.5)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 3)
+                            .stroke(Color.black.opacity(0.12), lineWidth: 0.6)
+                    )
+                    .shadow(color: Color.black.opacity(0.1), radius: 1)
+                    .offset(y: leftPawY)
+
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(Color.white)
+                    .frame(width: 5.5, height: 4.5)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 3)
+                            .stroke(Color.black.opacity(0.12), lineWidth: 0.6)
+                    )
+                    .shadow(color: Color.black.opacity(0.1), radius: 1)
+                    .offset(y: rightPawY)
+            }
+            .offset(y: -2.5)
+        }
+        .rotationEffect(.degrees(headTilt))
+        .offset(y: headBob)
+        .animation(.spring(response: 0.28, dampingFraction: 0.72), value: isTyping)
+        .animation(.spring(response: 0.26, dampingFraction: 0.75), value: isCursorNear)
+        .animation(.spring(response: 0.26, dampingFraction: 0.75), value: isLookingAtTimer)
+    }
+}
+
 
 // MARK: - 4. Kuro Character (Clever Shadow Fox)
 struct KuroCharacterView: View {
@@ -2248,8 +2619,28 @@ struct InteractiveCharacterView: View {
                     timerLookX: timerLookX,
                     timerLookY: timerLookY
                 )
-            case "luna", "spirit", "ghost", "birb":
-                LunaCharacterView(
+            case "axolotl", "luna", "spirit", "ghost", "birb":
+                AxolotlCharacterView(
+                    time: time,
+                    isRecording: state.isRecording,
+                    isProcessing: state.isProcessing,
+                    isDone: isDone,
+                    audioLevel: state.audioLevel,
+                    accentColor: state.hudAccentColor,
+                    isHovered: state.isHUDHovered,
+                    isHappy: state.isPetHappy,
+                    cursorLookX: state.cursorLookX,
+                    cursorLookY: state.cursorLookY,
+                    isCursorNear: state.isCursorNear,
+                    isTyping: isTyping,
+                    isLookingAtTimer: isLookingAtTimer,
+                    isTimerLow: isTimerLow,
+                    isTimerUrgent: isTimerUrgent,
+                    timerLookX: timerLookX,
+                    timerLookY: timerLookY
+                )
+            case "bongo", "bongocat", "cat_bongo":
+                BongoCatCharacterView(
                     time: time,
                     isRecording: state.isRecording,
                     isProcessing: state.isProcessing,
@@ -3154,10 +3545,11 @@ final class FloatingHUDController {
         // 3. Companion Mascot Submenu (Character Emojis Preserved!)
         let mascotMenu = NSMenu()
         let bots: [(id: String, name: String)] = [
-            ("gearbot", "🤖 GearBot (Curious)"),
+            ("axolotl", "🫧 Axolotl (Voice Gills)"),
+            ("bongo", "🐾 Bongo Cat (Typing Paws)"),
             ("neko", "🐱 Neko (Cozy Cat)"),
-            ("luna", "👻 Luna (Gentle Spirit)"),
-            ("kuro", "🦊 Kuro (Clever Fox)")
+            ("kuro", "🦊 Kuro (Clever Fox)"),
+            ("gearbot", "🤖 GearBot (Curious Bot)")
         ]
         for bot in bots {
             let item = NSMenuItem(title: bot.name, action: #selector(contextSelectMascot(_:)), keyEquivalent: "")
@@ -4432,10 +4824,11 @@ struct CompanionTabPane: View {
                     .foregroundColor(.secondary)
 
                 HStack(spacing: 4) {
-                    MascotChip(id: "gearbot", icon: "🤖", label: "Gear")
+                    MascotChip(id: "axolotl", icon: "🫧", label: "Axolotl")
+                    MascotChip(id: "bongo", icon: "🐾", label: "Bongo")
                     MascotChip(id: "neko", icon: "🐱", label: "Neko")
-                    MascotChip(id: "luna", icon: "👻", label: "Luna")
                     MascotChip(id: "kuro", icon: "🦊", label: "Kuro")
+                    MascotChip(id: "gearbot", icon: "🤖", label: "Gear")
                 }
             }
 
@@ -4547,7 +4940,8 @@ struct CompanionTabPane: View {
 
     private func mascotDisplayName(_ id: String) -> String {
         switch id.lowercased() {
-        case "luna", "spirit", "ghost": return "👻 Luna (Spirit)"
+        case "axolotl", "luna", "spirit", "ghost": return "🫧 Axolotl (Voice Gills)"
+        case "bongo", "bongocat": return "🐾 Bongo Cat (Paws)"
         case "neko", "cat": return "🐱 Neko (Cat)"
         case "kuro", "fox": return "🦊 Kuro (Fox)"
         default: return "🤖 GearBot (Bot)"
