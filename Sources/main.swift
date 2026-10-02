@@ -173,6 +173,33 @@ final class AppState: ObservableObject {
         }
     }
 
+    func increaseHUDSize() {
+        if hudSize == "mini" {
+            hudSize = "compact"
+        } else if hudSize == "compact" {
+            hudSize = "spacious"
+        }
+        saveConfigToDisk()
+        FloatingHUDController.shared.applyHUDSize()
+    }
+
+    func decreaseHUDSize() {
+        if hudSize == "spacious" {
+            hudSize = "compact"
+        } else if hudSize == "compact" {
+            hudSize = "mini"
+        }
+        saveConfigToDisk()
+        FloatingHUDController.shared.applyHUDSize()
+    }
+
+    func setHUDSize(_ size: String) {
+        guard size == "mini" || size == "compact" || size == "spacious" else { return }
+        hudSize = size
+        saveConfigToDisk()
+        FloatingHUDController.shared.applyHUDSize()
+    }
+
     var hudAccentColor: Color {
         switch hudColor {
         case "rose": return Color(red: 0.957, green: 0.247, blue: 0.369)
@@ -358,13 +385,15 @@ final class DaemonManager {
     static let shared = DaemonManager()
     private var process: Process?
     private let port = 18765
+    private var watchdogTimer: Timer?
+    private(set) var isStarting: Bool = false
 
     var healthURL: URL { URL(string: "http://127.0.0.1:\(port)/health")! }
     var transcribeURL: URL { URL(string: "http://127.0.0.1:\(port)/transcribe")! }
 
     func checkHealth(completion: @escaping (Bool) -> Void) {
         var req = URLRequest(url: healthURL)
-        req.timeoutInterval = 1.0
+        req.timeoutInterval = 1.2
         URLSession.shared.dataTask(with: req) { _, resp, _ in
             let ok = (resp as? HTTPURLResponse)?.statusCode == 200
             DispatchQueue.main.async { completion(ok) }
@@ -372,46 +401,101 @@ final class DaemonManager {
     }
 
     func ensureRunning() {
-        checkHealth { ready in
+        checkHealth { [weak self] ready in
             if ready {
                 AppState.shared.daemonReady = true
             } else {
-                self.startDaemon()
+                self?.startDaemon()
             }
         }
     }
 
-    private func startDaemon() {
+    func startWatchdog() {
+        watchdogTimer?.invalidate()
+        let timer = Timer.scheduledTimer(withTimeInterval: 4.0, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            self.checkHealth { ready in
+                AppState.shared.daemonReady = ready
+                if !ready && !self.isStarting {
+                    print("[DaemonManager] Watchdog detected daemon offline. Auto-reviving...")
+                    self.startDaemon()
+                }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        self.watchdogTimer = timer
+    }
+
+    func ensureReady(completion: @escaping (Bool) -> Void) {
+        checkHealth { [weak self] ready in
+            if ready {
+                AppState.shared.daemonReady = true
+                completion(true)
+            } else {
+                guard let self = self else { completion(false); return }
+                AppState.shared.statusText = "Waking AI Daemon..."
+                self.startDaemon()
+                var attempts = 0
+                let timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] t in
+                    attempts += 1
+                    self?.checkHealth { ok in
+                        if ok {
+                            AppState.shared.daemonReady = true
+                            t.invalidate()
+                            completion(true)
+                        } else if attempts > 20 {
+                            t.invalidate()
+                            completion(false)
+                        }
+                    }
+                }
+                RunLoop.main.add(timer, forMode: .common)
+            }
+        }
+    }
+
+    func startDaemon() {
+        guard !isStarting else { return }
+        isStarting = true
+
         let venvPython = "/Users/macbookair/Documents/GitHub/rand/stt_bench/.venv/bin/python"
         let scriptPath = "/Users/macbookair/Documents/GitHub/rand/ParakeetFlow/parakeet_daemon.py"
 
         guard FileManager.default.fileExists(atPath: venvPython),
-              FileManager.default.fileExists(atPath: scriptPath) else { return }
+              FileManager.default.fileExists(atPath: scriptPath) else {
+            isStarting = false
+            return
+        }
 
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: venvPython)
-        p.arguments = [scriptPath]
-        p.environment = ProcessInfo.processInfo.environment
+        let script = """
+        export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+        pkill -f parakeet_daemon.py 2>/dev/null || true
+        sleep 0.2
+        nohup "\(venvPython)" "\(scriptPath)" > /tmp/parakeet_daemon.log 2>&1 &
+        """
 
-        do {
-            try p.run()
-            self.process = p
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        task.arguments = ["-c", script]
+        try? task.run()
+        task.waitUntilExit()
 
-            var attempts = 0
-            Timer.scheduledTimer(withTimeInterval: 0.8, repeats: true) { timer in
-                attempts += 1
-                self.checkHealth { ready in
-                    if ready {
-                        AppState.shared.daemonReady = true
-                        timer.invalidate()
-                    } else if attempts > 40 {
-                        timer.invalidate()
-                    }
+        var attempts = 0
+        let pollTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] timer in
+            guard let self = self else { timer.invalidate(); return }
+            attempts += 1
+            self.checkHealth { ready in
+                if ready {
+                    AppState.shared.daemonReady = true
+                    self.isStarting = false
+                    timer.invalidate()
+                } else if attempts > 25 {
+                    self.isStarting = false
+                    timer.invalidate()
                 }
             }
-        } catch {
-            print("[DaemonManager] Start error: \(error)")
         }
+        RunLoop.main.add(pollTimer, forMode: .common)
     }
 }
 
@@ -427,6 +511,13 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
 
     func start() {
         if isStopping { return }
+        // Ensure no stale ffmpeg process locks the recording file or microphone
+        let killTask = Process()
+        killTask.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+        killTask.arguments = ["-9", "-f", "ffmpeg.*parakeet_recording"]
+        try? killTask.run()
+        killTask.waitUntilExit()
+
         try? FileManager.default.removeItem(atPath: recordPath)
         AppState.shared.refreshPermissions()
 
@@ -608,6 +699,24 @@ final class DictationService {
         AppState.shared.isProcessing = true
         AppState.shared.statusText = "Transcribing..."
 
+        // Ensure daemon is awake and ready before dispatching audio
+        DaemonManager.shared.ensureReady { [weak self] ready in
+            guard let self = self else { return }
+            guard ready else {
+                AppState.shared.isProcessing = false
+                AppState.shared.statusText = "AI Daemon offline. Auto-reviving..."
+                DaemonManager.shared.startDaemon()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                    AppState.shared.statusText = ""
+                    FloatingHUDController.shared.hide()
+                }
+                return
+            }
+            self.sendTranscribeRequest(audioPath: audioPath)
+        }
+    }
+
+    private func sendTranscribeRequest(audioPath: String) {
         let context = self.captureScreenContext()
 
         let payload: [String: Any] = [
@@ -655,10 +764,21 @@ final class DictationService {
                 }
 
                 guard let data = data,
-                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let finalText = json["final_text"] as? String,
-                      !finalText.isEmpty else {
-                    let errMsg = (try? JSONSerialization.jsonObject(with: data ?? Data()) as? [String: Any])?["error"] as? String
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    AppState.shared.statusText = "Invalid server response"
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                        AppState.shared.statusText = ""
+                        FloatingHUDController.shared.hide()
+                    }
+                    return
+                }
+
+                let rawFinal = (json["final_text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let rawSpeech = (json["raw_text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let finalText = !rawFinal.isEmpty ? rawFinal : rawSpeech
+
+                guard !finalText.isEmpty else {
+                    let errMsg = json["error"] as? String
                     AppState.shared.statusText = errMsg ?? "No speech detected"
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                         AppState.shared.statusText = ""
@@ -2056,8 +2176,9 @@ struct InteractiveCharacterView: View {
             }
         }
         .frame(width: 26, height: 26)
-        .scaleEffect(0.68)
-        .frame(width: 17, height: 17)
+        .scaleEffect(state.hudSize == "mini" ? 0.56 : (state.hudSize == "spacious" ? 0.88 : 0.70))
+        .frame(width: state.hudSize == "mini" ? 15 : (state.hudSize == "spacious" ? 23 : 18),
+               height: state.hudSize == "mini" ? 15 : (state.hudSize == "spacious" ? 23 : 18))
     }
 }
 
@@ -2244,20 +2365,20 @@ struct FloatingHUDView: View {
             if isVertical {
                 // VERTICAL CAPSULE FOR LEFT / RIGHT SCREEN EDGES
                 let isFlow = state.isFlowActive && !state.isRecording && !state.isProcessing
-                let pillWidth: CGFloat = isMini ? 24 : (isSpacious ? 30 : 26)
+                let pillWidth: CGFloat = isMini ? 24 : (isSpacious ? 32 : 28)
                 let pillHeight: CGFloat = {
                     if isFlow {
-                        return isMini ? 66 : (isSpacious ? 82 : 74)
+                        return isMini ? 66 : (isSpacious ? 92 : 78)
                     }
                     if state.listeningStyle == "character" {
-                        return isMini ? 36 : (isSpacious ? 46 : 42)
+                        return isMini ? 34 : (isSpacious ? 48 : 42)
                     }
                     if state.isRecording {
-                        return isMini ? 58 : (isSpacious ? 74 : 66)
+                        return isMini ? 56 : (isSpacious ? 80 : 68)
                     } else if state.isProcessing {
-                        return isMini ? 42 : (isSpacious ? 54 : 48)
+                        return isMini ? 40 : (isSpacious ? 56 : 48)
                     } else {
-                        return isMini ? 36 : (isSpacious ? 46 : 42)
+                        return isMini ? 34 : (isSpacious ? 48 : 42)
                     }
                 }()
 
@@ -2358,26 +2479,26 @@ struct FloatingHUDView: View {
                 .animation(.spring(response: 0.28, dampingFraction: 0.72), value: state.isFlowActive)
                 .animation(.spring(response: 0.28, dampingFraction: 0.72), value: state.isFlowPaused)
                 .scaleEffect(state.isHUDDragging ? 1.05 : 1.0)
-                .frame(width: 50, height: 96, alignment: .center)
+                .frame(width: isMini ? 44 : (isSpacious ? 64 : 52), height: isMini ? 86 : (isSpacious ? 124 : 100), alignment: .center)
             } else {
                 // HORIZONTAL CAPSULE FOR BOTTOM CENTER
                 let isFlow = state.isFlowActive && !state.isRecording && !state.isProcessing
                 let pillWidth: CGFloat = {
                     if isFlow {
-                        return isMini ? 74 : (isSpacious ? 92 : 84)
+                        return isMini ? 72 : (isSpacious ? 102 : 86)
                     }
                     if state.listeningStyle == "character" {
-                        return isMini ? 36 : (isSpacious ? 46 : 42)
+                        return isMini ? 34 : (isSpacious ? 48 : 42)
                     }
                     if state.isRecording {
-                        return isMini ? 58 : (isSpacious ? 74 : 66)
+                        return isMini ? 56 : (isSpacious ? 80 : 68)
                     } else if state.isProcessing {
-                        return isMini ? 42 : (isSpacious ? 54 : 48)
+                        return isMini ? 40 : (isSpacious ? 56 : 48)
                     } else {
-                        return isMini ? 36 : (isSpacious ? 46 : 42)
+                        return isMini ? 34 : (isSpacious ? 48 : 42)
                     }
                 }()
-                let pillHeight: CGFloat = isMini ? 24 : (isSpacious ? 30 : 26)
+                let pillHeight: CGFloat = isMini ? 24 : (isSpacious ? 32 : 28)
 
                 VStack(spacing: 0) {
                     ZStack {
@@ -2490,7 +2611,7 @@ struct FloatingHUDView: View {
                     .scaleEffect(state.isHUDDragging ? 1.05 : 1.0)
                     .animation(.spring(response: 0.24, dampingFraction: 0.72), value: state.isHUDDragging)
                 }
-                .frame(width: 108, height: 50, alignment: .bottom)
+                .frame(width: isMini ? 96 : (isSpacious ? 136 : 112), height: isMini ? 44 : (isSpacious ? 62 : 52), alignment: .bottom)
                 .padding(.bottom, 4)
             }
         }
@@ -2621,11 +2742,33 @@ final class FloatingHUDController {
     }
 
     func panelSize(for position: String) -> NSSize {
+        let size = AppState.shared.hudSize
         if position == "left" || position == "right" {
-            return NSSize(width: 50, height: 96)
+            switch size {
+            case "mini": return NSSize(width: 44, height: 86)
+            case "spacious": return NSSize(width: 64, height: 124)
+            default: return NSSize(width: 52, height: 100) // "compact"
+            }
         } else {
-            return NSSize(width: 108, height: 50)
+            switch size {
+            case "mini": return NSSize(width: 96, height: 44)
+            case "spacious": return NSSize(width: 136, height: 62)
+            default: return NSSize(width: 112, height: 52) // "compact"
+            }
         }
+    }
+
+    func applyHUDSize() {
+        guard let p = panel else { return }
+        let screen = currentTargetScreen()
+        let targetFrame = calculateFrame(for: AppState.shared.hudPosition, screen: screen)
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.22
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            p.animator().setFrame(targetFrame, display: true)
+        }
+        p.hasShadow = false
+        p.invalidateShadow()
     }
 
     func currentHUDCenter() -> NSPoint {
@@ -2711,7 +2854,35 @@ final class FloatingHUDController {
         mascotSubmenuItem.submenu = mascotMenu
         menu.addItem(mascotSubmenuItem)
 
-        // 3. Dock Position Submenu
+        // 3. Companion Size Submenu
+        let sizeMenu = NSMenu()
+        let sizes: [(id: String, name: String)] = [
+            ("mini", "Mini (Small)"),
+            ("compact", "Regular (Standard)"),
+            ("spacious", "Large (Spacious)")
+        ]
+        for s in sizes {
+            let item = NSMenuItem(title: s.name, action: #selector(contextSelectSize(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = s.id
+            if AppState.shared.hudSize == s.id {
+                item.state = .on
+            }
+            sizeMenu.addItem(item)
+        }
+        sizeMenu.addItem(NSMenuItem.separator())
+        let incItem = NSMenuItem(title: "➕ Increase Size", action: #selector(contextIncreaseSize), keyEquivalent: "")
+        incItem.target = self
+        sizeMenu.addItem(incItem)
+        let decItem = NSMenuItem(title: "➖ Reduce Size", action: #selector(contextDecreaseSize), keyEquivalent: "")
+        decItem.target = self
+        sizeMenu.addItem(decItem)
+
+        let sizeSubmenuItem = NSMenuItem(title: "Companion Size", action: nil, keyEquivalent: "")
+        sizeSubmenuItem.submenu = sizeMenu
+        menu.addItem(sizeSubmenuItem)
+
+        // 4. Dock Position Submenu
         let posMenu = NSMenu()
         let positions: [(id: String, name: String)] = [
             ("left", "Left Edge"),
@@ -2763,6 +2934,16 @@ final class FloatingHUDController {
         AppState.shared.hudCharacter = id
         AppState.shared.saveConfigToDisk()
         show()
+    }
+    @objc func contextSelectSize(_ sender: NSMenuItem) {
+        guard let sizeId = sender.representedObject as? String else { return }
+        AppState.shared.setHUDSize(sizeId)
+    }
+    @objc func contextIncreaseSize() {
+        AppState.shared.increaseHUDSize()
+    }
+    @objc func contextDecreaseSize() {
+        AppState.shared.decreaseHUDSize()
     }
     @objc func contextSelectPosition(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
@@ -3871,6 +4052,50 @@ struct CompanionTabPane: View {
                 }
             }
 
+            // Companion Size (Increase & Reduce)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack {
+                    Text("Companion Size:")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text(sizeDisplayName(state.hudSize))
+                        .font(.system(size: 8.5, weight: .semibold))
+                        .foregroundColor(state.hudAccentColor)
+                }
+
+                HStack(spacing: 4) {
+                    SizeChip(id: "mini", icon: "arrow.down.right.and.arrow.up.left", label: "Mini")
+                    SizeChip(id: "compact", icon: "square", label: "Regular")
+                    SizeChip(id: "spacious", icon: "arrow.up.left.and.arrow.down.right", label: "Large")
+
+                    Spacer(minLength: 2)
+
+                    // Stepper (+ / -) to quickly increase or reduce size
+                    HStack(spacing: 3) {
+                        Button(action: { state.decreaseHUDSize() }) {
+                            Image(systemName: "minus")
+                                .font(.system(size: 7.5, weight: .bold))
+                                .frame(width: 18, height: 19)
+                                .background(Color.primary.opacity(0.06))
+                                .cornerRadius(4)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Reduce Size (-)")
+
+                        Button(action: { state.increaseHUDSize() }) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 7.5, weight: .bold))
+                                .frame(width: 18, height: 19)
+                                .background(Color.primary.opacity(0.06))
+                                .cornerRadius(4)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Increase Size (+)")
+                    }
+                }
+            }
+
             Divider().opacity(0.12)
 
             // Desktop Pet Toggle
@@ -3905,6 +4130,47 @@ struct CompanionTabPane: View {
         case "kuro", "fox": return "🦊 Kuro (Fox)"
         default: return "🤖 GearBot (Bot)"
         }
+    }
+
+    private func sizeDisplayName(_ id: String) -> String {
+        switch id {
+        case "mini": return "Mini (Small)"
+        case "spacious": return "Large (Spacious)"
+        default: return "Regular (Default)"
+        }
+    }
+}
+
+// MARK: - Companion Size Preset Chip
+struct SizeChip: View {
+    let id: String
+    let icon: String
+    let label: String
+    @ObservedObject var state = AppState.shared
+
+    var isSelected: Bool { state.hudSize == id }
+
+    var body: some View {
+        Button(action: {
+            state.setHUDSize(id)
+        }) {
+            HStack(spacing: 2.5) {
+                Image(systemName: icon)
+                    .font(.system(size: 7))
+                Text(label)
+                    .font(.system(size: 8.5, weight: isSelected ? .semibold : .regular))
+            }
+            .padding(.horizontal, 5)
+            .padding(.vertical, 3.5)
+            .background(isSelected ? state.hudAccentColor.opacity(0.20) : Color.primary.opacity(0.05))
+            .foregroundColor(isSelected ? state.hudAccentColor : .primary)
+            .overlay(
+                RoundedRectangle(cornerRadius: 5)
+                    .stroke(isSelected ? state.hudAccentColor.opacity(0.55) : Color.clear, lineWidth: 1)
+            )
+            .cornerRadius(5)
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -4323,6 +4589,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         FloatingHUDController.shared.setup()
         HotkeyManager.shared.setup()
         DaemonManager.shared.ensureRunning()
+        DaemonManager.shared.startWatchdog()
         DictationService.shared.setupAppObserver()
         CompanionTrackerManager.shared.start()
         if AppState.shared.alwaysShowCompanion {
