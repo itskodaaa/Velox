@@ -156,6 +156,12 @@ final class AppState: ObservableObject {
     @Published var petClickCount: Int = 0
     @Published var petReactionEmoji: String = "💖"
 
+    // Unpasted Dictation Recovery & Assist Card
+    @Published var showUnpastedCard: Bool = false
+    @Published var unpastedText: String = ""
+    @Published var unpastedReason: String = ""
+    @Published var isCopiedFeedback: Bool = false
+
     // Live Cursor & Keyboard Interactivity (Fluid Look-At & Dynamic Typing Emotions)
     @Published var cursorLookX: Double = 0.0 // -1.0 (left) ... +1.0 (right)
     @Published var cursorLookY: Double = 0.0 // -1.0 (down) ... +1.0 (up)
@@ -794,6 +800,60 @@ final class DictationService {
         return (appName, windowTitle, selectedText)
     }
 
+    func canPasteIntoFocusedElement(bundleId: String) -> Bool {
+        guard AXIsProcessTrusted() else { return true }
+        guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId).first else {
+            return false
+        }
+        let forbidden = ["com.apple.dock", "com.apple.loginwindow", "com.apple.ScreenSaver.Engine"]
+        if forbidden.contains(bundleId) {
+            return false
+        }
+
+        let pid = app.processIdentifier
+        let appElement = AXUIElementCreateApplication(pid)
+
+        var focusedUIElement: AnyObject?
+        let err = AXUIElementCopyAttributeValue(appElement, kAXFocusedUIElementAttribute as CFString, &focusedUIElement)
+        guard err == .success, let elementRef = focusedUIElement else {
+            return false
+        }
+        let axElem = elementRef as! AXUIElement
+
+        var roleVal: AnyObject?
+        AXUIElementCopyAttributeValue(axElem, kAXRoleAttribute as CFString, &roleVal)
+        let rStr = (roleVal as? String) ?? ""
+
+        // 1. Definite text roles
+        if ["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"].contains(rStr) {
+            return true
+        }
+
+        // 2. Check attribute names for caret / text insertion / range
+        var names: CFArray?
+        AXUIElementCopyAttributeNames(axElem, &names)
+        let attrList = (names as? [String]) ?? []
+
+        if attrList.contains("AXSelectedTextRange") || attrList.contains("AXSelectedText") || attrList.contains("AXInsertionPointLineNumber") {
+            return true
+        }
+
+        // 3. Settable value
+        var isSettable: DarwinBoolean = false
+        if AXUIElementIsAttributeSettable(axElem, kAXValueAttribute as CFString, &isSettable) == .success && isSettable.boolValue {
+            return true
+        }
+
+        // 4. Web / Electron apps (VS Code, Chrome, Slack, Discord, Antigravity)
+        if rStr == "AXWebArea" || rStr == "AXGroup" || rStr.contains("Text") {
+            if attrList.contains("AXEditableAncestor") || attrList.contains("AXNumberOfCharacters") {
+                return true
+            }
+        }
+
+        return false
+    }
+
     func transcribeAndPaste(audioPath: String) {
         AppState.shared.isProcessing = true
         AppState.shared.statusText = "Transcribing..."
@@ -889,18 +949,29 @@ final class DictationService {
                 let totalMs = round(Date().timeIntervalSince(tStart) * 1000)
                 AppState.shared.lastResultText = finalText
                 AppState.shared.lastLatencyMs = totalMs
-                AppState.shared.statusText = "Pasted in \(Int(totalMs))ms ✓"
 
-                if AppState.shared.autoPaste {
+                // 1. Immediately place on clipboard so text is never lost
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                pasteboard.setString(finalText, forType: .string)
+
+                let targetBundle = self.lastExternalBundleId.isEmpty ? "com.google.antigravity" : self.lastExternalBundleId
+                let canPaste = self.canPasteIntoFocusedElement(bundleId: targetBundle)
+
+                if canPaste && AppState.shared.autoPaste {
+                    AppState.shared.statusText = "Pasted in \(Int(totalMs))ms ✓"
                     self.performInfalliblePaste(finalText)
-                }
-
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                    AppState.shared.lastResultText = ""
-                    AppState.shared.statusText = ""
-                    if !AppState.shared.isRecording && !AppState.shared.isProcessing {
-                        FloatingHUDController.shared.hide()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        AppState.shared.statusText = ""
+                        if !AppState.shared.isRecording && !AppState.shared.isProcessing && !AppState.shared.showUnpastedCard {
+                            FloatingHUDController.shared.hide()
+                        }
                     }
+                } else {
+                    print("[DictationService] Cursor not in text box (app: \(targetBundle)). Expanding unpasted recovery card.")
+                    AppState.shared.statusText = "Copied to clipboard"
+                    NSSound(named: "Funk")?.play()
+                    FloatingHUDController.shared.expandForUnpastedCard(text: finalText, reason: "Cursor wasn't in text box")
                 }
             }
         }.resume()
@@ -2438,6 +2509,105 @@ struct SnapGuideView: View {
     }
 }
 
+// MARK: - Unpasted Dictation Recovery & Copy Assist Card
+struct UnpastedTextCardView: View {
+    @ObservedObject var state = AppState.shared
+    let isDark: Bool
+    let time: Double
+
+    var body: some View {
+        HStack(spacing: 8) {
+            // Mascot
+            InteractiveCharacterView(state: state, time: time)
+                .frame(width: 22, height: 22)
+                .padding(.leading, 10)
+
+            // Info & Preview
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 3) {
+                    Image(systemName: "cursorarrow.rays")
+                        .font(.system(size: 7.5, weight: .bold))
+                        .foregroundColor(Color.orange)
+                    Text("No text box • Saved to clipboard")
+                        .font(.system(size: 7.5, weight: .bold, design: .rounded))
+                        .foregroundColor(Color.orange)
+                }
+
+                Text("\"\(state.unpastedText)\"")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(isDark ? Color.white.opacity(0.92) : Color.black.opacity(0.88))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: 130, alignment: .leading)
+            }
+
+            Spacer(minLength: 2)
+
+            // Buttons: Copy & Paste & Dismiss
+            HStack(spacing: 4) {
+                Button(action: {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(state.unpastedText, forType: .string)
+                    NSSound(named: "Tink")?.play()
+                    state.isCopiedFeedback = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                        FloatingHUDController.shared.collapseUnpastedCard()
+                    }
+                }) {
+                    HStack(spacing: 2.5) {
+                        Image(systemName: state.isCopiedFeedback ? "checkmark" : "doc.on.doc")
+                            .font(.system(size: 7, weight: .bold))
+                        Text(state.isCopiedFeedback ? "Copied" : "Copy")
+                            .font(.system(size: 8, weight: .bold, design: .rounded))
+                    }
+                    .foregroundColor(state.isCopiedFeedback ? .green : .white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3.5)
+                    .background(state.isCopiedFeedback ? Color.green.opacity(0.2) : state.hudAccentColor)
+                    .cornerRadius(5)
+                }
+                .buttonStyle(.plain)
+
+                Button(action: {
+                    let textToPaste = state.unpastedText
+                    FloatingHUDController.shared.collapseUnpastedCard()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        DictationService.shared.performInfalliblePaste(textToPaste)
+                    }
+                }) {
+                    HStack(spacing: 2) {
+                        Image(systemName: "arrow.right.doc.on.clipboard")
+                            .font(.system(size: 7, weight: .bold))
+                        Text("Paste")
+                            .font(.system(size: 8, weight: .bold, design: .rounded))
+                    }
+                    .foregroundColor(isDark ? Color.white.opacity(0.85) : Color.black.opacity(0.85))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 3.5)
+                    .background(Color.primary.opacity(0.08))
+                    .cornerRadius(5)
+                }
+                .buttonStyle(.plain)
+
+                // Dismiss ✕
+                Button(action: {
+                    FloatingHUDController.shared.collapseUnpastedCard()
+                }) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 6.5, weight: .bold))
+                        .foregroundColor(.secondary)
+                        .padding(3.5)
+                        .background(Color.primary.opacity(0.06))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.trailing, 8)
+        }
+        .frame(height: 44)
+    }
+}
+
 // MARK: - Compact Dark HUD Capsule (Minimal Footprint, Pure Capsule Shadow, Zero Box Bleed)
 struct FloatingHUDView: View {
     @ObservedObject var state = AppState.shared
@@ -2461,7 +2631,30 @@ struct FloatingHUDView: View {
             let capsuleFill = isDark ? Color(red: 0.08, green: 0.08, blue: 0.10) : Color(red: 0.96, green: 0.96, blue: 0.98)
             let capsuleBorder = isDark ? Color.white.opacity(state.isHUDDragging ? 0.45 : (state.isHUDHovered ? 0.32 : 0.22)) : Color.black.opacity(state.isHUDDragging ? 0.35 : (state.isHUDHovered ? 0.25 : 0.15))
 
-            if isVertical {
+            if state.showUnpastedCard {
+                // EXPANDED UNPASTED TEXT RECOVERY CARD
+                ZStack {
+                    Capsule()
+                        .fill(capsuleFill)
+                        .overlay(
+                            Capsule()
+                                .strokeBorder(capsuleBorder, lineWidth: 0.95)
+                        )
+                        .shadow(
+                            color: Color.black.opacity(state.isHUDDragging ? 0.46 : 0.32),
+                            radius: 8,
+                            x: 0,
+                            y: 3
+                        )
+
+                    UnpastedTextCardView(state: state, isDark: isDark, time: time)
+                }
+                .frame(width: 280, height: 48)
+                .transition(.asymmetric(
+                    insertion: .scale(scale: 0.82).combined(with: .opacity),
+                    removal: .scale(scale: 0.82).combined(with: .opacity)
+                ))
+            } else if isVertical {
                 // VERTICAL CAPSULE FOR LEFT / RIGHT SCREEN EDGES
                 let isFlow = state.isFlowActive && !state.isRecording && !state.isProcessing
                 let pillWidth: CGFloat = isMini ? 24 : (isSpacious ? 32 : 28)
@@ -2841,6 +3034,9 @@ final class FloatingHUDController {
     }
 
     func panelSize(for position: String) -> NSSize {
+        if AppState.shared.showUnpastedCard {
+            return NSSize(width: 290, height: 56)
+        }
         let size = AppState.shared.hudSize
         if position == "left" || position == "right" {
             switch size {
@@ -2870,69 +3066,108 @@ final class FloatingHUDController {
         p.invalidateShadow()
     }
 
+    func expandForUnpastedCard(text: String, reason: String = "Cursor wasn't in text box") {
+        AppState.shared.unpastedText = text
+        AppState.shared.unpastedReason = reason
+        AppState.shared.isCopiedFeedback = false
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.72)) {
+            AppState.shared.showUnpastedCard = true
+        }
+        show()
+        guard let p = panel else { return }
+        let screen = currentTargetScreen()
+        let targetFrame = calculateFrame(for: AppState.shared.hudPosition, screen: screen)
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.28
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            p.animator().setFrame(targetFrame, display: true)
+        }
+
+        // Auto collapse after 10 seconds if user does not interact
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10.0) { [weak self] in
+            if AppState.shared.showUnpastedCard && AppState.shared.unpastedText == text {
+                self?.collapseUnpastedCard()
+            }
+        }
+    }
+
+    func collapseUnpastedCard() {
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.76)) {
+            AppState.shared.showUnpastedCard = false
+        }
+        guard let p = panel else { return }
+        let screen = currentTargetScreen()
+        let targetFrame = calculateFrame(for: AppState.shared.hudPosition, screen: screen)
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.24
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            p.animator().setFrame(targetFrame, display: true)
+        }
+        if !AppState.shared.alwaysShowCompanion && !AppState.shared.isFlowActive {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                if !AppState.shared.showUnpastedCard {
+                    self.hide()
+                }
+            }
+        }
+    }
+
     func currentHUDCenter() -> NSPoint {
         guard let p = panel else { return .zero }
         let frame = p.frame
         return NSPoint(x: frame.midX, y: frame.midY)
     }
 
-    // MARK: - Mascot & Flow Mode Context Menu
+    private func makeMenuItem(title: String, symbol: String? = nil, action: Selector? = nil, keyEquiv: String = "") -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: keyEquiv)
+        item.target = self
+        if let sym = symbol {
+            let img = NSImage(systemSymbolName: sym, accessibilityDescription: title)
+            img?.isTemplate = true
+            item.image = img
+        }
+        return item
+    }
+
+    // MARK: - Ultra-Clean Premium Context Menu (Native SF Symbols, Submenu Flow, No Emoji Clutter)
     func buildContextMenu() -> NSMenu {
         let menu = NSMenu()
 
-        // 1. Flow Mode Section
-        let titleText = AppState.shared.isFlowActive
-            ? "⚡ Flow: \(AppState.shared.flowTimeString) \(AppState.shared.isFlowPaused ? "(Paused)" : "")"
-            : "⚡ Flow Mode (Focus Timer)"
-        let titleItem = NSMenuItem(title: titleText, action: nil, keyEquivalent: "")
-        titleItem.isEnabled = false
-        menu.addItem(titleItem)
-
-        if AppState.shared.isFlowActive {
-            let pauseItem = NSMenuItem(
-                title: AppState.shared.isFlowPaused ? "▶️ Resume Focus" : "⏸ Pause Focus",
-                action: #selector(contextToggleFlowPause),
-                keyEquivalent: ""
-            )
-            pauseItem.target = self
-            menu.addItem(pauseItem)
-
-            let add5Item = NSMenuItem(
-                title: "➕ Add 5 Minutes",
-                action: #selector(contextAdd5Minutes),
-                keyEquivalent: ""
-            )
-            add5Item.target = self
-            menu.addItem(add5Item)
-
-            let stopItem = NSMenuItem(
-                title: "⏹ Stop Session",
-                action: #selector(contextStopFlow),
-                keyEquivalent: ""
-            )
-            stopItem.target = self
-            menu.addItem(stopItem)
-        } else {
-            let p25 = NSMenuItem(title: "🍅 25 min Focus (Pomodoro)", action: #selector(contextStart25Min), keyEquivalent: "")
-            p25.target = self
-            menu.addItem(p25)
-
-            let p45 = NSMenuItem(title: "🌊 45 min Deep Work", action: #selector(contextStart45Min), keyEquivalent: "")
-            p45.target = self
-            menu.addItem(p45)
-
-            let p60 = NSMenuItem(title: "🚀 60 min Flow State", action: #selector(contextStart60Min), keyEquivalent: "")
-            p60.target = self
-            menu.addItem(p60)
-
-            let p15 = NSMenuItem(title: "⚡ 15 min Quick Sprint", action: #selector(contextStart15Min), keyEquivalent: "")
-            p15.target = self
-            menu.addItem(p15)
+        // 1. Copy Previous Dictation (Instant Recovery)
+        let prevText = !AppState.shared.unpastedText.isEmpty ? AppState.shared.unpastedText : AppState.shared.lastResultText
+        if !prevText.isEmpty {
+            let snippet = prevText.count > 24 ? String(prevText.prefix(21)) + "..." : prevText
+            let copyItem = makeMenuItem(title: "Copy Dictation: \"\(snippet)\"", symbol: "doc.on.doc", action: #selector(contextCopyLastText))
+            menu.addItem(copyItem)
+            menu.addItem(NSMenuItem.separator())
         }
 
-        menu.addItem(NSMenuItem.separator())
+        // 2. Focus Timer / Flow Mode Section
+        if AppState.shared.isFlowActive {
+            let statusText = "Flow: \(AppState.shared.flowTimeString) \(AppState.shared.isFlowPaused ? "(Paused)" : "")"
+            let flowHeader = makeMenuItem(title: statusText, symbol: "timer")
+            flowHeader.isEnabled = false
+            menu.addItem(flowHeader)
 
-        // 2. Companion Mascot Submenu
+            let pauseTitle = AppState.shared.isFlowPaused ? "Resume Focus" : "Pause Focus"
+            let pauseSym = AppState.shared.isFlowPaused ? "play.fill" : "pause.fill"
+            menu.addItem(makeMenuItem(title: pauseTitle, symbol: pauseSym, action: #selector(contextToggleFlowPause)))
+            menu.addItem(makeMenuItem(title: "Add 5 Minutes", symbol: "plus.circle", action: #selector(contextAdd5Minutes)))
+            menu.addItem(makeMenuItem(title: "Stop Session", symbol: "stop.fill", action: #selector(contextStopFlow)))
+            menu.addItem(NSMenuItem.separator())
+        } else {
+            let timerMenu = NSMenu()
+            timerMenu.addItem(makeMenuItem(title: "25 min Focus (Pomodoro)", symbol: "timer", action: #selector(contextStart25Min)))
+            timerMenu.addItem(makeMenuItem(title: "45 min Deep Work", symbol: "flame", action: #selector(contextStart45Min)))
+            timerMenu.addItem(makeMenuItem(title: "60 min Flow State", symbol: "bolt.circle", action: #selector(contextStart60Min)))
+            timerMenu.addItem(makeMenuItem(title: "15 min Quick Sprint", symbol: "bolt", action: #selector(contextStart15Min)))
+
+            let timerSubmenuItem = makeMenuItem(title: "Focus Timer", symbol: "timer")
+            timerSubmenuItem.submenu = timerMenu
+            menu.addItem(timerSubmenuItem)
+        }
+
+        // 3. Companion Mascot Submenu (Character Emojis Preserved!)
         let mascotMenu = NSMenu()
         let bots: [(id: String, name: String)] = [
             ("gearbot", "🤖 GearBot (Curious)"),
@@ -2949,11 +3184,11 @@ final class FloatingHUDController {
             }
             mascotMenu.addItem(item)
         }
-        let mascotSubmenuItem = NSMenuItem(title: "Companion Mascot", action: nil, keyEquivalent: "")
+        let mascotSubmenuItem = makeMenuItem(title: "Companion Mascot", symbol: "person.crop.circle")
         mascotSubmenuItem.submenu = mascotMenu
         menu.addItem(mascotSubmenuItem)
 
-        // 3. Companion Size Submenu
+        // 4. Companion Size Submenu
         let sizeMenu = NSMenu()
         let sizes: [(id: String, name: String)] = [
             ("mini", "Mini (Small)"),
@@ -2970,18 +3205,14 @@ final class FloatingHUDController {
             sizeMenu.addItem(item)
         }
         sizeMenu.addItem(NSMenuItem.separator())
-        let incItem = NSMenuItem(title: "➕ Increase Size", action: #selector(contextIncreaseSize), keyEquivalent: "")
-        incItem.target = self
-        sizeMenu.addItem(incItem)
-        let decItem = NSMenuItem(title: "➖ Reduce Size", action: #selector(contextDecreaseSize), keyEquivalent: "")
-        decItem.target = self
-        sizeMenu.addItem(decItem)
+        sizeMenu.addItem(makeMenuItem(title: "Increase Size", symbol: "plus", action: #selector(contextIncreaseSize)))
+        sizeMenu.addItem(makeMenuItem(title: "Reduce Size", symbol: "minus", action: #selector(contextDecreaseSize)))
 
-        let sizeSubmenuItem = NSMenuItem(title: "Companion Size", action: nil, keyEquivalent: "")
+        let sizeSubmenuItem = makeMenuItem(title: "Companion Size", symbol: "arrow.up.left.and.arrow.down.right")
         sizeSubmenuItem.submenu = sizeMenu
         menu.addItem(sizeSubmenuItem)
 
-        // 4. Dock Position Submenu
+        // 5. Dock Position Submenu
         let posMenu = NSMenu()
         let positions: [(id: String, name: String)] = [
             ("left", "Left Edge"),
@@ -2997,11 +3228,11 @@ final class FloatingHUDController {
             }
             posMenu.addItem(item)
         }
-        let posSubmenuItem = NSMenuItem(title: "Dock Position", action: nil, keyEquivalent: "")
+        let posSubmenuItem = makeMenuItem(title: "Dock Position", symbol: "dock.rectangle")
         posSubmenuItem.submenu = posMenu
         menu.addItem(posSubmenuItem)
 
-        // 5. Microphone Input Submenu
+        // 6. Microphone Input Submenu
         let micMenu = NSMenu()
         let sysDefaultItem = NSMenuItem(title: "System Default (\(AppState.shared.currentMicName))", action: #selector(contextSelectMic(_:)), keyEquivalent: "")
         sysDefaultItem.target = self
@@ -3024,32 +3255,31 @@ final class FloatingHUDController {
             }
         }
         micMenu.addItem(NSMenuItem.separator())
-        let rescanItem = NSMenuItem(title: "🔄 Rescan Audio Devices", action: #selector(contextRescanMics), keyEquivalent: "")
-        rescanItem.target = self
-        micMenu.addItem(rescanItem)
+        micMenu.addItem(makeMenuItem(title: "Rescan Audio Devices", symbol: "arrow.triangle.2.circlepath", action: #selector(contextRescanMics)))
 
-        let micSubmenuItem = NSMenuItem(title: "Microphone Input", action: nil, keyEquivalent: "")
+        let micSubmenuItem = makeMenuItem(title: "Microphone Input", symbol: "mic.fill")
         micSubmenuItem.submenu = micMenu
         menu.addItem(micSubmenuItem)
 
         menu.addItem(NSMenuItem.separator())
 
-        // 4. Control Center & Dashboard
-        let controlCenterItem = NSMenuItem(title: "Control Center...", action: #selector(contextOpenControlCenter), keyEquivalent: "")
-        controlCenterItem.target = self
-        menu.addItem(controlCenterItem)
-
-        let dashItem = NSMenuItem(title: "Web Dashboard & Settings", action: #selector(contextOpenDashboard), keyEquivalent: "")
-        dashItem.target = self
-        menu.addItem(dashItem)
+        // 7. Control Center & Dashboard
+        menu.addItem(makeMenuItem(title: "Control Center...", symbol: "slider.horizontal.3", action: #selector(contextOpenControlCenter)))
+        menu.addItem(makeMenuItem(title: "Web Dashboard & Settings", symbol: "globe", action: #selector(contextOpenDashboard)))
 
         menu.addItem(NSMenuItem.separator())
 
-        let quitItem = NSMenuItem(title: "Quit Velox", action: #selector(contextQuit), keyEquivalent: "q")
-        quitItem.target = self
-        menu.addItem(quitItem)
+        menu.addItem(makeMenuItem(title: "Quit Velox", symbol: "power", action: #selector(contextQuit), keyEquiv: "q"))
 
         return menu
+    }
+
+    @objc func contextCopyLastText() {
+        let text = !AppState.shared.unpastedText.isEmpty ? AppState.shared.unpastedText : AppState.shared.lastResultText
+        guard !text.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        NSSound(named: "Tink")?.play()
     }
 
     @objc func contextStart25Min() { AppState.shared.startFlow(minutes: 25) }
@@ -3198,7 +3428,7 @@ final class FloatingHUDController {
 
     private func checkDockPositionChange() {
         guard let p = panel else { return }
-        if AppState.shared.isHUDDragging || AppState.shared.isRecording || AppState.shared.isProcessing { return }
+        if AppState.shared.isHUDDragging || AppState.shared.isRecording || AppState.shared.isProcessing || AppState.shared.showUnpastedCard { return }
 
         let screen = currentTargetScreen()
         // If monitor configuration changed and window is on wrong screen, re-center!
@@ -3959,10 +4189,53 @@ struct DictateTabPane: View {
                 .background(Color.primary.opacity(0.04))
                 .cornerRadius(6)
 
-                Text((!state.useLlmPolish || state.provider == "local_rules") ? "⚡ Built-in Rules: Offline, Instant" : "🤖 LLM Mode: \(state.provider == "groq" ? "Groq Qwen 27B" : "LLM Polish")")
-                    .font(.system(size: 8, weight: .regular))
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
+                HStack(spacing: 3) {
+                    Image(systemName: (!state.useLlmPolish || state.provider == "local_rules") ? "bolt.fill" : "sparkles")
+                        .font(.system(size: 7.5))
+                        .foregroundColor(state.hudAccentColor)
+                    Text((!state.useLlmPolish || state.provider == "local_rules") ? "Built-in Rules: Offline, Instant" : "LLM Mode: \(state.provider == "groq" ? "Groq Qwen 27B" : "LLM Polish")")
+                        .font(.system(size: 8, weight: .regular))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+            }
+
+            // Previous Dictation Recovery Pill
+            let prev = !state.unpastedText.isEmpty ? state.unpastedText : state.lastResultText
+            if !prev.isEmpty {
+                HStack(spacing: 4) {
+                    Image(systemName: "doc.text")
+                        .font(.system(size: 8))
+                        .foregroundColor(state.hudAccentColor)
+                    Text("\"\(prev)\"")
+                        .font(.system(size: 8.5))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .foregroundColor(.primary.opacity(0.85))
+                    Spacer()
+                    Button(action: {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(prev, forType: .string)
+                        NSSound(named: "Tink")?.play()
+                    }) {
+                        HStack(spacing: 2) {
+                            Image(systemName: "doc.on.doc")
+                                .font(.system(size: 7))
+                            Text("Copy")
+                                .font(.system(size: 7.5, weight: .semibold))
+                        }
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Color.primary.opacity(0.08))
+                        .cornerRadius(4)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Copy previous dictation to clipboard")
+                }
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(Color.primary.opacity(0.035))
+                .cornerRadius(5)
             }
 
             // Bottom Micro Status Card
@@ -4053,12 +4326,12 @@ struct FlowTabPane: View {
             // Preset Grid (2x2)
             VStack(spacing: 5) {
                 HStack(spacing: 5) {
-                    FlowPresetButton(title: "🍅 25m Focus", minutes: 25)
-                    FlowPresetButton(title: "🌊 45m Deep Work", minutes: 45)
+                    FlowPresetButton(icon: "timer", title: "25m Focus", minutes: 25)
+                    FlowPresetButton(icon: "flame.fill", title: "45m Deep Work", minutes: 45)
                 }
                 HStack(spacing: 5) {
-                    FlowPresetButton(title: "🚀 60m Flow State", minutes: 60)
-                    FlowPresetButton(title: "⚡ 15m Sprint", minutes: 15)
+                    FlowPresetButton(icon: "bolt.circle.fill", title: "60m Flow State", minutes: 60)
+                    FlowPresetButton(icon: "bolt.fill", title: "15m Sprint", minutes: 15)
                 }
             }
 
@@ -4116,6 +4389,7 @@ struct FlowTabPane: View {
 }
 
 struct FlowPresetButton: View {
+    let icon: String
     let title: String
     let minutes: Int
     @ObservedObject var state = AppState.shared
@@ -4128,19 +4402,24 @@ struct FlowPresetButton: View {
         Button(action: {
             state.startFlow(minutes: minutes)
         }) {
-            Text(title)
-                .font(.system(size: 9, weight: isCurrentTarget ? .semibold : .regular))
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
-                .padding(.vertical, 5)
-                .frame(maxWidth: .infinity)
-                .background(isCurrentTarget ? state.hudAccentColor.opacity(0.2) : Color.primary.opacity(0.05))
-                .foregroundColor(isCurrentTarget ? state.hudAccentColor : .primary)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 5)
-                        .stroke(isCurrentTarget ? state.hudAccentColor.opacity(0.5) : Color.clear, lineWidth: 1)
-                )
-                .cornerRadius(5)
+            HStack(spacing: 3.5) {
+                Image(systemName: icon)
+                    .font(.system(size: 8))
+                    .foregroundColor(isCurrentTarget ? state.hudAccentColor : .secondary)
+                Text(title)
+                    .font(.system(size: 9, weight: isCurrentTarget ? .semibold : .regular))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+            }
+            .padding(.vertical, 5)
+            .frame(maxWidth: .infinity)
+            .background(isCurrentTarget ? state.hudAccentColor.opacity(0.2) : Color.primary.opacity(0.05))
+            .foregroundColor(isCurrentTarget ? state.hudAccentColor : .primary)
+            .overlay(
+                RoundedRectangle(cornerRadius: 5)
+                    .stroke(isCurrentTarget ? state.hudAccentColor.opacity(0.5) : Color.clear, lineWidth: 1)
+            )
+            .cornerRadius(5)
         }
         .buttonStyle(.plain)
     }
