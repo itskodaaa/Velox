@@ -140,6 +140,7 @@ final class AppState: ObservableObject {
     @AppStorage("hud_always_show") var alwaysShowCompanion: Bool = true // Desktop pet companion mode
     @AppStorage("hud_y_offset") var hudYOffset: Double = 0.0        // User nudge from dock/bottom
     @AppStorage("hud_listening_style") var listeningStyle: String = "morph" // "morph", "character", "waveform"
+    @AppStorage("app_theme") var appTheme: String = "system"        // "system", "dark", "light"
     @Published var isHUDDragging: Bool = false
     @Published var isHUDHovered: Bool = false
     @Published var isPetHappy: Bool = false
@@ -229,7 +230,23 @@ final class AppState: ObservableObject {
         if let halways = json["hud_always_show"] as? Bool { self.alwaysShowCompanion = halways }
         if let hyoff = json["hud_y_offset"] as? Double { self.hudYOffset = hyoff }
         if let lstyle = json["hud_listening_style"] as? String, !lstyle.isEmpty { self.listeningStyle = lstyle }
+        if let theme = json["app_theme"] as? String, !theme.isEmpty { self.appTheme = theme }
+        applyTheme()
         refreshOpenRouterBalance()
+    }
+
+    func applyTheme() {
+        DispatchQueue.main.async {
+            let popover = AppDelegate.shared?.popover
+            switch self.appTheme {
+            case "dark":
+                popover?.appearance = NSAppearance(named: .darkAqua)
+            case "light":
+                popover?.appearance = NSAppearance(named: .aqua)
+            default:
+                popover?.appearance = nil
+            }
+        }
     }
 
     func saveConfigToDisk() {
@@ -256,10 +273,12 @@ final class AppState: ObservableObject {
         payload["hud_always_show"] = self.alwaysShowCompanion
         payload["hud_y_offset"] = self.hudYOffset
         payload["hud_listening_style"] = self.listeningStyle
+        payload["app_theme"] = self.appTheme
 
         if let data = try? JSONSerialization.data(withJSONObject: payload, options: .prettyPrinted) {
             try? data.write(to: configURL)
         }
+        applyTheme()
     }
 
     func refreshOpenRouterBalance() {
@@ -301,7 +320,7 @@ final class AppState: ObservableObject {
         if self.currentMicName != micName {
             self.currentMicName = micName
         }
-        if trusted {
+        if trusted && !CompanionTrackerManager.shared.isRunning {
             CompanionTrackerManager.shared.start()
         }
     }
@@ -980,8 +999,6 @@ struct GearBotCharacterView: View {
     var cursorLookY: Double = 0.0
     var isCursorNear: Bool = false
     var isTyping: Bool = false
-    var typingBurst: Bool = false
-    var typingPhase: Int = 0
     var isFlowActive: Bool = false
     var isLookingAtTimer: Bool = false
     var isTimerLow: Bool = false
@@ -993,19 +1010,14 @@ struct GearBotCharacterView: View {
         let isIdle = !isRecording && !isProcessing && !isDone
         let cycle = isIdle ? time.truncatingRemainder(dividingBy: 18.0) : 0.0
 
-        // Head tilt: reacts dynamically to typing phase, timer look-at, cursor, or idle
+        // Head tilt: reacts dynamically to typing, timer look-at, cursor, or idle
         let headTilt: Double = {
             if isHappy {
                 return sin(time * 18.0) * 5.5
             } else if isLookingAtTimer {
                 return timerLookX * 6.5 // Leans head toward the timer countdown!
             } else if isTyping {
-                switch typingPhase {
-                case 1: return sin(time * 8.0) * 3.5 // Rhythm bop sway
-                case 2: return 0.0 // Focused lock-in
-                case 3: return 5.5 // Approving smirk tilt
-                default: return -7.5 // Iconic skeptical side-eye tilt
-                }
+                return -3.0 // Gentle subtle focus tilt
             } else if isTimerLow {
                 return sin(time * 24.0) * (isTimerUrgent ? 1.4 : 0.8) // Nervous timer jitter
             } else if isCursorNear {
@@ -1034,16 +1046,7 @@ struct GearBotCharacterView: View {
             } else if isLookingAtTimer {
                 return CGFloat(-timerLookY * 1.5)
             } else if isTyping {
-                switch typingPhase {
-                case 1:
-                    return -2.0 + CGFloat(abs(sin(time * (typingBurst ? 18.0 : 12.0)))) * -2.2 // Keystroke beat bounce!
-                case 2:
-                    return -2.2 // Perked upright in awe
-                case 3:
-                    return CGFloat(sin(time * 3.0) * 0.8)
-                default:
-                    return -1.5 + (typingBurst ? CGFloat(abs(sin(time * 20.0))) * -1.0 : 0)
-                }
+                return -0.8 // Calm attentive posture
             } else if isTimerUrgent {
                 return -2.0 + CGFloat(abs(sin(time * 18.0))) * -1.8 // Excited sprint bounce!
             } else if isTimerLow {
@@ -1066,12 +1069,7 @@ struct GearBotCharacterView: View {
             } else if isLookingAtTimer {
                 return (CGFloat(timerLookX * 1.7), CGFloat(-timerLookY * 1.0))
             } else if isTyping {
-                switch typingPhase {
-                case 1: return (0.0, 1.2) // Looking down/forward at keyboard
-                case 2: return (0.0, 0.2) // Wide locked-in focus
-                case 3: return (1.2, 0.4) // Cheerful glance
-                default: return (-1.8, 0.8) // Hard side-eye up-left
-                }
+                return (-1.0, 0.7) // Gentle downward keyboard glance
             } else if isTimerUrgent {
                 return (CGFloat(sin(time * 8.0) * 1.4), 0.0) // Nervous darting glance
             } else if isCursorNear {
@@ -1090,36 +1088,20 @@ struct GearBotCharacterView: View {
 
         // Antenna bulb illumination & frequency:
         let antennaBulbLit = isRecording || isProcessing || isHovered || isHappy || isTyping || isCursorNear || isTimerLow
-        let antennaSpeed = isTimerUrgent ? 36.0 : (isTyping ? 30.0 : 20.0)
+        let antennaSpeed = isTimerUrgent ? 36.0 : (isTyping ? 24.0 : 20.0)
 
         // Blinking:
         let blinkPhase = sin(time * 1.7)
-        let isBlinking = (blinkPhase > 0.96) && !isProcessing && !isDone && !isHappy && !isTyping && !isTimerUrgent
+        let isBlinking = (blinkPhase > 0.96) && !isProcessing && !isDone && !isHappy && !isTimerUrgent
 
         let leftEyeScaleY: CGFloat = {
             if isBlinking { return 0.15 }
-            if isTyping {
-                switch typingPhase {
-                case 1: return 1.0
-                case 2: return 1.35 // Wide camera lens in awe!
-                case 3: return 0.70 // Happy squint
-                default: return 1.15
-                }
-            }
             if isTimerUrgent { return 1.25 }
             return 1.0
         }()
 
         let rightEyeScaleY: CGFloat = {
             if isBlinking { return 0.15 }
-            if isTyping {
-                switch typingPhase {
-                case 1: return 1.0
-                case 2: return 1.35 // Wide camera lens in awe!
-                case 3: return 0.70 // Happy squint
-                default: return 0.35 // Skeptical narrowed eye during side-eye!
-                }
-            }
             if isTimerUrgent { return 1.25 }
             return 1.0
         }()
@@ -1271,8 +1253,6 @@ struct NekoCharacterView: View {
     var cursorLookY: Double = 0.0
     var isCursorNear: Bool = false
     var isTyping: Bool = false
-    var typingBurst: Bool = false
-    var typingPhase: Int = 0
     var isFlowActive: Bool = false
     var isLookingAtTimer: Bool = false
     var isTimerLow: Bool = false
@@ -1282,7 +1262,7 @@ struct NekoCharacterView: View {
 
     var body: some View {
         let blinkPhase = sin(time * 1.6)
-        let isBlinking = blinkPhase > 0.96 && !isProcessing && !isDone && !isHappy && !isTyping && !isTimerUrgent
+        let isBlinking = blinkPhase > 0.96 && !isProcessing && !isDone && !isHappy && !isTimerUrgent
 
         // Ear twitches:
         let leftEarTwitch: Double = {
@@ -1291,12 +1271,7 @@ struct NekoCharacterView: View {
             } else if isLookingAtTimer {
                 return timerLookX * 4.0
             } else if isTyping {
-                switch typingPhase {
-                case 1: return sin(time * 14.0) * 8.0 // Ears bobbing to typing beat!
-                case 2: return 2.0 // Upright alert
-                case 3: return -4.0 // Purring relaxed
-                default: return -14.0 // Airplane ear!
-                }
+                return -4.0 // Subtle slight perked ear
             } else if isTimerUrgent {
                 return sin(time * 26.0) * 10.0 // Nervous ear twitch
             } else if isCursorNear {
@@ -1313,12 +1288,7 @@ struct NekoCharacterView: View {
             } else if isLookingAtTimer {
                 return timerLookX * 12.0 // Right ear pointed toward timer!
             } else if isTyping {
-                switch typingPhase {
-                case 1: return -sin(time * 14.0) * 8.0
-                case 2: return 2.0
-                case 3: return 4.0
-                default: return 15.0 // Tilted alert ear!
-                }
+                return 5.0 // Subtle alert ear
             } else if isTimerUrgent {
                 return -sin(time * 26.0) * 10.0
             } else if isCursorNear {
@@ -1335,12 +1305,7 @@ struct NekoCharacterView: View {
             } else if isLookingAtTimer {
                 return timerLookX * 7.0 // Head turns toward timer!
             } else if isTyping {
-                switch typingPhase {
-                case 1: return sin(time * 10.0) * 4.0 // Kitty head nodding to typing beat
-                case 2: return 0.0 // Pounce focus
-                case 3: return 5.0 // Soft purr tilt
-                default: return -6.5 // Judging side-eye head cock
-                }
+                return -3.0 // Gentle curious head tilt
             } else if isTimerLow {
                 return sin(time * 24.0) * (isTimerUrgent ? 1.5 : 0.8) // Nervous timer jitter
             } else if isCursorNear {
@@ -1355,12 +1320,7 @@ struct NekoCharacterView: View {
             } else if isLookingAtTimer {
                 return CGFloat(-timerLookY * 1.5)
             } else if isTyping {
-                switch typingPhase {
-                case 1: return -2.0 + CGFloat(abs(sin(time * (typingBurst ? 18.0 : 12.0)))) * -2.0 // Vibing bop
-                case 2: return -2.0 // Alert
-                case 3: return 0.0
-                default: return -1.0
-                }
+                return -0.5 // Calm attentive posture
             } else if isTimerUrgent {
                 return -2.0 + CGFloat(abs(sin(time * 18.0))) * -1.6 // Excited bounce!
             } else if isTimerLow {
@@ -1377,12 +1337,7 @@ struct NekoCharacterView: View {
             } else if isLookingAtTimer {
                 return (CGFloat(timerLookX * 1.8), CGFloat(-timerLookY * 1.1))
             } else if isTyping {
-                switch typingPhase {
-                case 1: return (0.0, 0.9) // Looking at keyboard
-                case 2: return (0.0, 0.0) // Big round eyes centered
-                case 3: return (0.8, 0.4) // Sweet look
-                default: return (-1.8, 0.7) // Side-eye
-                }
+                return (-1.0, 0.7) // Gentle glance toward keyboard
             } else if isTimerUrgent {
                 return (CGFloat(sin(time * 8.0) * 1.5), 0.0)
             } else if isCursorNear {
@@ -1459,12 +1414,12 @@ struct NekoCharacterView: View {
                             ZStack {
                                 Capsule()
                                     .fill(accentColor)
-                                    .frame(width: isCursorNear || (isTyping && typingPhase == 2) ? 3.6 : 3.2, height: isTyping && typingPhase == 0 ? 3.0 : 5.0)
-                                    .scaleEffect(y: isBlinking ? 0.15 : (isTyping && typingPhase == 0 ? 0.45 : 1.0))
+                                    .frame(width: isCursorNear ? 3.6 : 3.2, height: 4.5)
+                                    .scaleEffect(y: isBlinking ? 0.15 : 1.0)
                                     .offset(x: eyeOffsetX, y: eyeOffsetY)
                                     .shadow(color: accentColor.opacity(0.6), radius: 2)
 
-                                if (isCursorNear || (isTyping && typingPhase == 2)) && !isBlinking {
+                                if isCursorNear && !isBlinking {
                                     Circle()
                                         .fill(Color.white.opacity(0.9))
                                         .frame(width: 1.0, height: 1.0)
@@ -1476,12 +1431,12 @@ struct NekoCharacterView: View {
                             ZStack {
                                 Capsule()
                                     .fill(accentColor)
-                                    .frame(width: isCursorNear || (isTyping && typingPhase == 2) ? 3.6 : 3.2, height: isTyping && typingPhase == 0 ? 3.0 : 5.0)
-                                    .scaleEffect(y: isBlinking ? 0.15 : (isTyping && typingPhase == 0 ? 0.45 : 1.0))
+                                    .frame(width: isCursorNear ? 3.6 : 3.2, height: 4.5)
+                                    .scaleEffect(y: isBlinking ? 0.15 : 1.0)
                                     .offset(x: eyeOffsetX, y: eyeOffsetY)
                                     .shadow(color: accentColor.opacity(0.6), radius: 2)
 
-                                if (isCursorNear || (isTyping && typingPhase == 2)) && !isBlinking {
+                                if isCursorNear && !isBlinking {
                                     Circle()
                                         .fill(Color.white.opacity(0.9))
                                         .frame(width: 1.0, height: 1.0)
@@ -1490,25 +1445,7 @@ struct NekoCharacterView: View {
                             }
                         }
 
-                        if isTyping {
-                            switch typingPhase {
-                            case 2:
-                                Text("o")
-                                    .font(.system(size: 4.5, weight: .bold))
-                                    .foregroundColor(accentColor.opacity(0.85))
-                                    .offset(y: -1)
-                            case 3:
-                                Text("^")
-                                    .font(.system(size: 5.0, weight: .bold))
-                                    .foregroundColor(accentColor.opacity(0.85))
-                                    .offset(y: -1)
-                            default:
-                                Text("w") // Sly kitty smirk: :3
-                                    .font(.system(size: 4.5, weight: .bold))
-                                    .foregroundColor(accentColor.opacity(0.85))
-                                    .offset(y: -1)
-                            }
-                        } else if isTimerUrgent {
+                        if isTimerUrgent {
                             Text("o")
                                 .font(.system(size: 4.5, weight: .bold))
                                 .foregroundColor(accentColor.opacity(0.85))
@@ -1550,8 +1487,6 @@ struct LunaCharacterView: View {
     var cursorLookY: Double = 0.0
     var isCursorNear: Bool = false
     var isTyping: Bool = false
-    var typingBurst: Bool = false
-    var typingPhase: Int = 0
     var isFlowActive: Bool = false
     var isLookingAtTimer: Bool = false
     var isTimerLow: Bool = false
@@ -1561,7 +1496,7 @@ struct LunaCharacterView: View {
 
     var body: some View {
         let blinkPhase = sin(time * 1.5)
-        let isBlinking = blinkPhase > 0.96 && !isProcessing && !isDone && !isHappy && !isTyping && !isTimerUrgent
+        let isBlinking = blinkPhase > 0.96 && !isProcessing && !isDone && !isHappy && !isTimerUrgent
 
         let floatBob: Double = {
             if isHappy {
@@ -1571,11 +1506,7 @@ struct LunaCharacterView: View {
             } else if isTimerUrgent {
                 return -2.0 + sin(time * 14.0) * 2.2
             } else if isTyping {
-                switch typingPhase {
-                case 1: return sin(time * 12.0) * 2.2 // Figure-8 float sway
-                case 2: return -1.5
-                default: return sin(time * 4.0) * 1.6
-                }
+                return -0.8 // Calm attentive hovering
             } else if isTimerLow {
                 return sin(time * 10.0) * 1.8
             }
@@ -1588,12 +1519,7 @@ struct LunaCharacterView: View {
             } else if isLookingAtTimer {
                 return timerLookX * 7.5
             } else if isTyping {
-                switch typingPhase {
-                case 1: return sin(time * 8.0) * 5.0
-                case 2: return 0.0
-                case 3: return 6.0
-                default: return -7.0
-                }
+                return -3.0 // Gentle soft tilt
             } else if isTimerLow {
                 return sin(time * 24.0) * (isTimerUrgent ? 1.6 : 0.8)
             } else if isCursorNear {
@@ -1608,12 +1534,7 @@ struct LunaCharacterView: View {
             } else if isLookingAtTimer {
                 return (CGFloat(timerLookX * 1.8), CGFloat(-timerLookY * 1.1))
             } else if isTyping {
-                switch typingPhase {
-                case 1: return (0.0, 0.9)
-                case 2: return (0.0, 0.0)
-                case 3: return (0.8, 0.4)
-                default: return (-1.7, 0.8)
-                }
+                return (-1.0, 0.7) // Gentle glance toward keyboard
             } else if isTimerUrgent {
                 return (CGFloat(sin(time * 8.0) * 1.4), 0.0)
             } else if isCursorNear {
@@ -1622,7 +1543,7 @@ struct LunaCharacterView: View {
             return (0.0, 0.0)
         }()
 
-        let wispSpeed = isTimerUrgent ? 14.0 : (isTyping ? 9.0 : 3.5)
+        let wispSpeed = isTimerUrgent ? 14.0 : 3.5
 
         VStack(spacing: -1) {
             // Little floating star crown / celestial wisp on top
@@ -1674,8 +1595,8 @@ struct LunaCharacterView: View {
                             ZStack {
                                 Capsule()
                                     .fill(Color.black.opacity(0.88))
-                                    .frame(width: (isTyping && typingPhase == 2) ? 4.2 : 3.6, height: 5.2)
-                                    .scaleEffect(y: isBlinking ? 0.15 : (isTyping && typingPhase == 0 ? 0.45 : 1.0))
+                                    .frame(width: 3.6, height: 5.2)
+                                    .scaleEffect(y: isBlinking ? 0.15 : 1.0)
                                     .offset(x: eyeOffsetX, y: eyeOffsetY)
 
                                 if !isBlinking {
@@ -1689,8 +1610,8 @@ struct LunaCharacterView: View {
                             ZStack {
                                 Capsule()
                                     .fill(Color.black.opacity(0.88))
-                                    .frame(width: (isTyping && typingPhase == 2) ? 4.2 : 3.6, height: 5.2)
-                                    .scaleEffect(y: isBlinking ? 0.15 : (isTyping && typingPhase == 0 ? 0.45 : 1.0))
+                                    .frame(width: 3.6, height: 5.2)
+                                    .scaleEffect(y: isBlinking ? 0.15 : 1.0)
                                     .offset(x: eyeOffsetX, y: eyeOffsetY)
 
                                 if !isBlinking {
@@ -1702,18 +1623,13 @@ struct LunaCharacterView: View {
                             }
                         }
 
-                        // Soft blushing cheeks & mouth
+                        // Soft blushing cheeks
                         HStack(spacing: 5) {
                             Circle()
-                                .fill(Color.pink.opacity(isTyping || isCursorNear || isTimerLow ? 0.90 : 0.45))
+                                .fill(Color.pink.opacity(isCursorNear || isTimerLow ? 0.90 : 0.45))
                                 .frame(width: 2.2, height: 1.4)
-                            if isTyping && typingPhase == 2 {
-                                Text("o").font(.system(size: 3.5, weight: .bold)).foregroundColor(.white)
-                            } else if isTyping && typingPhase == 3 {
-                                Text("‿").font(.system(size: 4.5, weight: .bold)).foregroundColor(.white)
-                            }
                             Circle()
-                                .fill(Color.pink.opacity(isTyping || isCursorNear || isTimerLow ? 0.90 : 0.45))
+                                .fill(Color.pink.opacity(isCursorNear || isTimerLow ? 0.90 : 0.45))
                                 .frame(width: 2.2, height: 1.4)
                         }
                         .offset(y: -0.5)
@@ -1753,8 +1669,6 @@ struct KuroCharacterView: View {
     var cursorLookY: Double = 0.0
     var isCursorNear: Bool = false
     var isTyping: Bool = false
-    var typingBurst: Bool = false
-    var typingPhase: Int = 0
     var isFlowActive: Bool = false
     var isLookingAtTimer: Bool = false
     var isTimerLow: Bool = false
@@ -1764,7 +1678,7 @@ struct KuroCharacterView: View {
 
     var body: some View {
         let blinkPhase = sin(time * 1.7)
-        let isBlinking = blinkPhase > 0.96 && !isProcessing && !isDone && !isHappy && !isTyping && !isTimerUrgent
+        let isBlinking = blinkPhase > 0.96 && !isProcessing && !isDone && !isHappy && !isTimerUrgent
 
         // Fox ear angles:
         let leftEarAngle: Double = {
@@ -1773,12 +1687,7 @@ struct KuroCharacterView: View {
             } else if isLookingAtTimer {
                 return timerLookX * 4.0
             } else if isTyping {
-                switch typingPhase {
-                case 1: return sin(time * 14.0) * 9.0 - 4.0
-                case 2: return 0.0
-                case 3: return -6.0
-                default: return -14.0 // Cocked ear!
-                }
+                return -8.0 // Subtle alert cocked ear
             } else if isTimerUrgent {
                 return sin(time * 26.0) * 12.0
             } else if isCursorNear {
@@ -1793,12 +1702,7 @@ struct KuroCharacterView: View {
             } else if isLookingAtTimer {
                 return timerLookX * 14.0 // Pointed toward timer!
             } else if isTyping {
-                switch typingPhase {
-                case 1: return -sin(time * 14.0) * 9.0 + 4.0
-                case 2: return 0.0
-                case 3: return 10.0
-                default: return 18.0 // Alert swagger ear!
-                }
+                return 8.0 // Subtle alert ear
             } else if isTimerUrgent {
                 return -sin(time * 26.0) * 12.0
             } else if isCursorNear {
@@ -1813,12 +1717,7 @@ struct KuroCharacterView: View {
             } else if isLookingAtTimer {
                 return timerLookX * 7.5
             } else if isTyping {
-                switch typingPhase {
-                case 1: return sin(time * 10.0) * 4.5 // Fox nodding to beat
-                case 2: return 0.0 // Predator lock-in
-                case 3: return 6.5 // Swagger smirk
-                default: return -8.0 // Sassy swagger side-eye
-                }
+                return -3.0 // Gentle subtle tilt
             } else if isTimerLow {
                 return sin(time * 24.0) * (isTimerUrgent ? 1.6 : 0.8)
             } else if isCursorNear {
@@ -1833,12 +1732,7 @@ struct KuroCharacterView: View {
             } else if isLookingAtTimer {
                 return CGFloat(-timerLookY * 1.5)
             } else if isTyping {
-                switch typingPhase {
-                case 1: return -2.0 + CGFloat(abs(sin(time * (typingBurst ? 18.0 : 12.0)))) * -2.2
-                case 2: return -2.0
-                case 3: return 0.0
-                default: return -1.0
-                }
+                return -0.5 // Calm attentive posture
             } else if isTimerUrgent {
                 return -2.0 + CGFloat(abs(sin(time * 18.0))) * -1.8
             } else if isTimerLow {
@@ -1855,12 +1749,7 @@ struct KuroCharacterView: View {
             } else if isLookingAtTimer {
                 return (CGFloat(timerLookX * 2.0), CGFloat(-timerLookY * 1.1))
             } else if isTyping {
-                switch typingPhase {
-                case 1: return (0.0, 0.9)
-                case 2: return (0.0, 0.0)
-                case 3: return (1.0, 0.4)
-                default: return (-1.8, 0.8)
-                }
+                return (-1.0, 0.7) // Gentle downward keyboard glance
             } else if isTimerUrgent {
                 return (CGFloat(sin(time * 8.0) * 1.6), 0.0)
             } else if isCursorNear {
@@ -1950,16 +1839,16 @@ struct KuroCharacterView: View {
                             // Left Eye
                             Capsule()
                                 .fill(accentColor)
-                                .frame(width: isCursorNear || (isTyping && typingPhase == 2) ? 3.6 : 3.2, height: isTyping && typingPhase == 0 ? 2.5 : 4.5)
-                                .scaleEffect(y: isBlinking ? 0.15 : (isTyping && typingPhase == 0 ? 0.40 : 1.0))
+                                .frame(width: isCursorNear ? 3.6 : 3.2, height: 4.5)
+                                .scaleEffect(y: isBlinking ? 0.15 : 1.0)
                                 .offset(x: eyeOffsetX, y: eyeOffsetY)
                                 .shadow(color: accentColor.opacity(0.7), radius: 2)
 
                             // Right Eye
                             Capsule()
                                 .fill(accentColor)
-                                .frame(width: isCursorNear || (isTyping && typingPhase == 2) ? 3.6 : 3.2, height: isTyping && typingPhase == 0 ? 2.5 : 4.5)
-                                .scaleEffect(y: isBlinking ? 0.15 : (isTyping && typingPhase == 0 ? 0.40 : 1.0))
+                                .frame(width: isCursorNear ? 3.6 : 3.2, height: 4.5)
+                                .scaleEffect(y: isBlinking ? 0.15 : 1.0)
                                 .offset(x: eyeOffsetX, y: eyeOffsetY)
                                 .shadow(color: accentColor.opacity(0.7), radius: 2)
                         }
@@ -1969,25 +1858,7 @@ struct KuroCharacterView: View {
                             .fill(Color.black.opacity(0.9))
                             .frame(width: 1.8, height: 1.2)
 
-                        if isTyping {
-                            switch typingPhase {
-                            case 2:
-                                Text("o")
-                                    .font(.system(size: 4.5, weight: .bold))
-                                    .foregroundColor(accentColor.opacity(0.9))
-                                    .offset(y: -1)
-                            case 3:
-                                Text("^")
-                                    .font(.system(size: 5.0, weight: .bold))
-                                    .foregroundColor(accentColor.opacity(0.9))
-                                    .offset(y: -1)
-                            default:
-                                Text("v") // Fang smirk
-                                    .font(.system(size: 4.5, weight: .bold))
-                                    .foregroundColor(accentColor.opacity(0.9))
-                                    .offset(y: -1)
-                            }
-                        } else if isTimerUrgent {
+                        if isTimerUrgent {
                             Text("^")
                                 .font(.system(size: 5.0, weight: .bold))
                                 .foregroundColor(accentColor.opacity(0.9))
@@ -2047,12 +1918,9 @@ struct InteractiveCharacterView: View {
         let isDone = !state.isRecording && !state.isProcessing && !state.lastResultText.isEmpty
         let charType = state.hudCharacter.lowercased()
 
-        // 1. Dynamic typing state & phase calculations (Zero-stuck guarantee)
+        // 1. Dynamic typing state (instant recovery: 0.45s after typing stops)
         let now = ProcessInfo.processInfo.systemUptime
-        let isTyping = state.isUserTyping || (now - state.lastTypingTime < 1.30)
-        let typingDuration = max(0.0, now - state.typingStartTime)
-        // Transition phases smoothly every 2.4 seconds: 0 -> 1 -> 2 -> 3
-        let typingPhase = Int(typingDuration / 2.4) % 4
+        let isTyping = state.isUserTyping || (now - state.lastTypingTime < 0.45)
 
         // 2. Flow mode timer awareness:
         let isFlow = state.isFlowActive
@@ -2092,8 +1960,6 @@ struct InteractiveCharacterView: View {
                     cursorLookY: state.cursorLookY,
                     isCursorNear: state.isCursorNear,
                     isTyping: isTyping,
-                    typingBurst: state.typingSpeedBurst,
-                    typingPhase: typingPhase,
                     isLookingAtTimer: isLookingAtTimer,
                     isTimerLow: isTimerLow,
                     isTimerUrgent: isTimerUrgent,
@@ -2114,8 +1980,6 @@ struct InteractiveCharacterView: View {
                     cursorLookY: state.cursorLookY,
                     isCursorNear: state.isCursorNear,
                     isTyping: isTyping,
-                    typingBurst: state.typingSpeedBurst,
-                    typingPhase: typingPhase,
                     isLookingAtTimer: isLookingAtTimer,
                     isTimerLow: isTimerLow,
                     isTimerUrgent: isTimerUrgent,
@@ -2136,8 +2000,6 @@ struct InteractiveCharacterView: View {
                     cursorLookY: state.cursorLookY,
                     isCursorNear: state.isCursorNear,
                     isTyping: isTyping,
-                    typingBurst: state.typingSpeedBurst,
-                    typingPhase: typingPhase,
                     isLookingAtTimer: isLookingAtTimer,
                     isTimerLow: isTimerLow,
                     isTimerUrgent: isTimerUrgent,
@@ -2164,8 +2026,6 @@ struct InteractiveCharacterView: View {
                         cursorLookY: state.cursorLookY,
                         isCursorNear: state.isCursorNear,
                         isTyping: isTyping,
-                        typingBurst: state.typingSpeedBurst,
-                        typingPhase: typingPhase,
                         isLookingAtTimer: isLookingAtTimer,
                         isTimerLow: isTimerLow,
                         isTimerUrgent: isTimerUrgent,
@@ -2187,8 +2047,6 @@ struct InteractiveCharacterView: View {
                     cursorLookY: state.cursorLookY,
                     isCursorNear: state.isCursorNear,
                     isTyping: isTyping,
-                    typingBurst: state.typingSpeedBurst,
-                    typingPhase: typingPhase,
                     isLookingAtTimer: isLookingAtTimer,
                     isTimerLow: isTimerLow,
                     isTimerUrgent: isTimerUrgent,
@@ -2363,9 +2221,16 @@ struct SnapGuideView: View {
 // MARK: - Compact Dark HUD Capsule (Minimal Footprint, Pure Capsule Shadow, Zero Box Bleed)
 struct FloatingHUDView: View {
     @ObservedObject var state = AppState.shared
+    @Environment(\.colorScheme) var systemColorScheme
 
     var isVertical: Bool {
         state.hudPosition == "left" || state.hudPosition == "right"
+    }
+
+    var isDark: Bool {
+        if state.appTheme == "dark" { return true }
+        if state.appTheme == "light" { return false }
+        return systemColorScheme == .dark
     }
 
     var body: some View {
@@ -2373,6 +2238,8 @@ struct FloatingHUDView: View {
             let time = timeline.date.timeIntervalSinceReferenceDate
             let isMini = state.hudSize == "mini"
             let isSpacious = state.hudSize == "spacious"
+            let capsuleFill = isDark ? Color(red: 0.08, green: 0.08, blue: 0.10) : Color(red: 0.96, green: 0.96, blue: 0.98)
+            let capsuleBorder = isDark ? Color.white.opacity(state.isHUDDragging ? 0.45 : (state.isHUDHovered ? 0.32 : 0.22)) : Color.black.opacity(state.isHUDDragging ? 0.35 : (state.isHUDHovered ? 0.25 : 0.15))
 
             if isVertical {
                 // VERTICAL CAPSULE FOR LEFT / RIGHT SCREEN EDGES
@@ -2403,11 +2270,11 @@ struct FloatingHUDView: View {
                     }
 
                     Capsule()
-                        .fill(Color(red: 0.08, green: 0.08, blue: 0.10))
+                        .fill(capsuleFill)
                         .overlay(
                             Capsule()
                                 .strokeBorder(
-                                    Color.white.opacity(state.isHUDDragging ? 0.45 : (state.isHUDHovered ? 0.32 : 0.22)),
+                                    capsuleBorder,
                                     lineWidth: state.isHUDDragging ? 1.05 : 0.85
                                 )
                         )
@@ -2535,11 +2402,11 @@ struct FloatingHUDView: View {
                         }
 
                         Capsule()
-                            .fill(Color(red: 0.08, green: 0.08, blue: 0.10))
+                            .fill(capsuleFill)
                             .overlay(
                                 Capsule()
                                     .strokeBorder(
-                                        Color.white.opacity(state.isHUDDragging ? 0.45 : (state.isHUDHovered ? 0.32 : 0.22)),
+                                        capsuleBorder,
                                         lineWidth: state.isHUDDragging ? 1.05 : 0.85
                                     )
                             )
@@ -3299,18 +3166,21 @@ final class FloatingHUDController {
 final class CompanionTrackerManager {
     static let shared = CompanionTrackerManager()
 
+    private(set) var isRunning: Bool = false
     private var mouseMonitor: Any?
     private var keyMonitor: Any?
     private var localMouseMonitor: Any?
     private var localKeyMonitor: Any?
     private var lastMouseTime: Double = 0.0
     private var typingResetTimer: Timer?
-    private var recentKeyTimestamps: [Double] = []
+    private var mouseIdleTimer: Timer?
 
     private init() {}
 
     func start() {
+        guard !isRunning else { return }
         stop()
+        isRunning = true
 
         // 1. Local Monitors (within Velox app itself)
         localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged]) { [weak self] event in
@@ -3324,7 +3194,6 @@ final class CompanionTrackerManager {
         }
 
         // 2. Global Monitors (system-wide when typing or navigating in other apps)
-        // Zero CPU polling: passive event callbacks throttled to ~35Hz
         guard AXIsProcessTrusted() else { return }
 
         mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged]) { [weak self] event in
@@ -3337,6 +3206,7 @@ final class CompanionTrackerManager {
     }
 
     func stop() {
+        isRunning = false
         if let m = mouseMonitor {
             NSEvent.removeMonitor(m)
             mouseMonitor = nil
@@ -3355,24 +3225,19 @@ final class CompanionTrackerManager {
         }
         typingResetTimer?.invalidate()
         typingResetTimer = nil
-        recentKeyTimestamps.removeAll()
+        mouseIdleTimer?.invalidate()
+        mouseIdleTimer = nil
     }
 
     private func handleMouseMoved(_ event: NSEvent) {
         let now = ProcessInfo.processInfo.systemUptime
-        // Strict rate-limiting to ~35Hz (>= 0.028s between samples) to protect battery & prevent lag
+        // Strict rate-limiting to ~35Hz to protect battery & prevent lag
         guard (now - lastMouseTime) >= 0.028 else { return }
         lastMouseTime = now
 
         let hudCenter = FloatingHUDController.shared.currentHUDCenter()
         guard hudCenter != .zero else {
-            if AppState.shared.isCursorNear {
-                DispatchQueue.main.async {
-                    AppState.shared.isCursorNear = false
-                    AppState.shared.cursorLookX = 0.0
-                    AppState.shared.cursorLookY = 0.0
-                }
-            }
+            resetCursorLook()
             return
         }
 
@@ -3381,27 +3246,40 @@ final class CompanionTrackerManager {
         let dy = mouseLoc.y - hudCenter.y
         let distance = hypot(dx, dy)
 
-        // Proximity bubble: 420 points
-        if distance < 420.0 {
-            let normalizedX = max(-1.0, min(1.0, Double(dx / 220.0)))
-            let normalizedY = max(-1.0, min(1.0, Double(dy / 220.0)))
+        // Proximity bubble: 160 points (natural interactive range around HUD)
+        if distance < 160.0 {
+            let normalizedX = max(-1.0, min(1.0, Double(dx / 110.0)))
+            let normalizedY = max(-1.0, min(1.0, Double(dy / 110.0)))
 
-            DispatchQueue.main.async {
-                if !AppState.shared.isCursorNear ||
-                   abs(AppState.shared.cursorLookX - normalizedX) > 0.02 ||
-                   abs(AppState.shared.cursorLookY - normalizedY) > 0.02 {
-                    AppState.shared.isCursorNear = true
-                    AppState.shared.cursorLookX = normalizedX
-                    AppState.shared.cursorLookY = normalizedY
-                }
-            }
-        } else {
-            if AppState.shared.isCursorNear {
-                DispatchQueue.main.async {
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                AppState.shared.isCursorNear = true
+                AppState.shared.cursorLookX = normalizedX
+                AppState.shared.cursorLookY = normalizedY
+
+                // Auto-relax eyes after 1.5s of mouse idle
+                self.mouseIdleTimer?.invalidate()
+                let t = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: false) { _ in
                     AppState.shared.isCursorNear = false
                     AppState.shared.cursorLookX = 0.0
                     AppState.shared.cursorLookY = 0.0
                 }
+                RunLoop.main.add(t, forMode: .common)
+                self.mouseIdleTimer = t
+            }
+        } else {
+            resetCursorLook()
+        }
+    }
+
+    private func resetCursorLook() {
+        if AppState.shared.isCursorNear {
+            DispatchQueue.main.async { [weak self] in
+                self?.mouseIdleTimer?.invalidate()
+                self?.mouseIdleTimer = nil
+                AppState.shared.isCursorNear = false
+                AppState.shared.cursorLookX = 0.0
+                AppState.shared.cursorLookY = 0.0
             }
         }
     }
@@ -3411,29 +3289,13 @@ final class CompanionTrackerManager {
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-
-            if now - AppState.shared.lastTypingTime > 1.8 {
-                AppState.shared.typingStartTime = now
-            }
             AppState.shared.lastTypingTime = now
-            AppState.shared.typingKeystrokeCount += 1
+            AppState.shared.isUserTyping = true
 
-            // Keep keystrokes in last 1.8s to detect fast typing bursts
-            self.recentKeyTimestamps = self.recentKeyTimestamps.filter { now - $0 < 1.8 }
-            self.recentKeyTimestamps.append(now)
-
-            let isBurst = self.recentKeyTimestamps.count >= 8
-
-            if !AppState.shared.isUserTyping || AppState.shared.typingSpeedBurst != isBurst {
-                AppState.shared.isUserTyping = true
-                AppState.shared.typingSpeedBurst = isBurst
-            }
-
-            // Debounce timer resets typing side-eye after 1.25s of inactivity, added to common modes!
+            // Fast 0.45s debounce: immediately stops reacting once typing stops!
             self.typingResetTimer?.invalidate()
-            let t = Timer.scheduledTimer(withTimeInterval: 1.25, repeats: false) { _ in
+            let t = Timer.scheduledTimer(withTimeInterval: 0.45, repeats: false) { _ in
                 AppState.shared.isUserTyping = false
-                AppState.shared.typingSpeedBurst = false
             }
             RunLoop.main.add(t, forMode: .common)
             self.typingResetTimer = t
@@ -3444,9 +3306,20 @@ final class CompanionTrackerManager {
 // MARK: - Ultra-Clean Two-Pane Menu Bar Control Center
 struct MenuBarControlCenterView: View {
     @ObservedObject var state = AppState.shared
+    @Environment(\.colorScheme) var systemColorScheme
     private let pollTimer = Timer.publish(every: 0.8, on: .main, in: .common).autoconnect()
 
+    var isDark: Bool {
+        if state.appTheme == "dark" { return true }
+        if state.appTheme == "light" { return false }
+        return systemColorScheme == .dark
+    }
+
     var body: some View {
+        let baseBg = isDark ? Color(red: 0.052, green: 0.055, blue: 0.065) : Color(red: 0.985, green: 0.988, blue: 0.995)
+        let sidebarBg = isDark ? Color(red: 0.038, green: 0.040, blue: 0.048) : Color(red: 0.938, green: 0.942, blue: 0.952)
+        let borderStroke = isDark ? Color.white.opacity(0.08) : Color.black.opacity(0.08)
+
         HStack(spacing: 0) {
             // 1. LEFT SIDEBAR NAVIGATION
             VStack(spacing: 6) {
@@ -3457,7 +3330,7 @@ struct MenuBarControlCenterView: View {
                         .foregroundColor(state.hudAccentColor)
                     Text("VELOX")
                         .font(.system(size: 8.5, weight: .black, design: .rounded))
-                        .foregroundColor(.primary.opacity(0.85))
+                        .foregroundColor(isDark ? Color.white.opacity(0.9) : Color.black.opacity(0.85))
                         .tracking(1.0)
                 }
                 .padding(.top, 10)
@@ -3465,13 +3338,40 @@ struct MenuBarControlCenterView: View {
 
                 // Navigation Tabs
                 VStack(spacing: 4) {
-                    SidebarTabButton(tab: .dictate, current: state.activeTab) { state.activeTab = .dictate }
-                    SidebarTabButton(tab: .flow, current: state.activeTab) { state.activeTab = .flow }
-                    SidebarTabButton(tab: .companion, current: state.activeTab) { state.activeTab = .companion }
-                    SidebarTabButton(tab: .settings, current: state.activeTab) { state.activeTab = .settings }
+                    SidebarTabButton(tab: .dictate, current: state.activeTab, isDark: isDark) { state.activeTab = .dictate }
+                    SidebarTabButton(tab: .flow, current: state.activeTab, isDark: isDark) { state.activeTab = .flow }
+                    SidebarTabButton(tab: .companion, current: state.activeTab, isDark: isDark) { state.activeTab = .companion }
+                    SidebarTabButton(tab: .settings, current: state.activeTab, isDark: isDark) { state.activeTab = .settings }
                 }
 
                 Spacer()
+
+                // Theme Quick Toggle Pill
+                Button(action: {
+                    if state.appTheme == "system" {
+                        state.appTheme = "dark"
+                    } else if state.appTheme == "dark" {
+                        state.appTheme = "light"
+                    } else {
+                        state.appTheme = "system"
+                    }
+                    state.saveConfigToDisk()
+                }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: state.appTheme == "dark" ? "moon.stars.fill" : (state.appTheme == "light" ? "sun.max.fill" : "circle.lefthalf.filled"))
+                            .font(.system(size: 7.5))
+                            .foregroundColor(state.hudAccentColor)
+                        Text(state.appTheme == "dark" ? "Dark" : (state.appTheme == "light" ? "Light" : "Auto"))
+                            .font(.system(size: 7.5, weight: .semibold, design: .rounded))
+                            .foregroundColor(isDark ? Color.white.opacity(0.65) : Color.black.opacity(0.65))
+                    }
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2.5)
+                    .background(isDark ? Color.white.opacity(0.06) : Color.black.opacity(0.05))
+                    .cornerRadius(8)
+                }
+                .buttonStyle(.plain)
+                .help("Theme: Click to toggle Auto / Dark / Light")
 
                 // Status Indicator at bottom of sidebar
                 HStack(spacing: 3) {
@@ -3482,14 +3382,14 @@ struct MenuBarControlCenterView: View {
                         .font(.system(size: 8, weight: .medium))
                         .foregroundColor(.secondary)
                 }
-                .padding(.bottom, 10)
+                .padding(.bottom, 8)
             }
             .frame(width: 76)
-            .background(Color.primary.opacity(0.035))
+            .background(sidebarBg)
             .overlay(
                 Rectangle()
                     .frame(width: 1)
-                    .foregroundColor(Color.primary.opacity(0.08)),
+                    .foregroundColor(borderStroke),
                 alignment: .trailing
             )
 
@@ -3512,11 +3412,15 @@ struct MenuBarControlCenterView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .frame(width: 274)
+            .background(baseBg)
         }
         .frame(width: 350, height: 330)
+        .background(baseBg)
+        .preferredColorScheme(state.appTheme == "dark" ? .dark : (state.appTheme == "light" ? .light : nil))
         .onAppear {
             state.loadConfigFromDisk()
             state.refreshPermissions()
+            state.applyTheme()
         }
         .onReceive(pollTimer) { _ in
             state.refreshPermissions()
@@ -3528,6 +3432,7 @@ struct MenuBarControlCenterView: View {
 struct SidebarTabButton: View {
     let tab: ControlCenterTab
     let current: ControlCenterTab
+    var isDark: Bool = true
     let action: () -> Void
 
     var isSelected: Bool { tab == current }
@@ -3537,15 +3442,19 @@ struct SidebarTabButton: View {
             VStack(spacing: 3) {
                 Image(systemName: tab.icon)
                     .font(.system(size: 13, weight: isSelected ? .bold : .regular))
-                    .foregroundColor(isSelected ? AppState.shared.hudAccentColor : .secondary)
+                    .foregroundColor(isSelected ? AppState.shared.hudAccentColor : (isDark ? Color.white.opacity(0.45) : Color.black.opacity(0.45)))
                 Text(tab.rawValue)
                     .font(.system(size: 9, weight: isSelected ? .bold : .medium))
-                    .foregroundColor(isSelected ? .primary : .secondary)
+                    .foregroundColor(isSelected ? (isDark ? .white : .black) : (isDark ? Color.white.opacity(0.55) : Color.black.opacity(0.55)))
             }
             .frame(width: 64, height: 42)
             .background(
                 RoundedRectangle(cornerRadius: 7)
-                    .fill(isSelected ? Color.primary.opacity(0.09) : Color.clear)
+                    .fill(isSelected ? (isDark ? Color.white.opacity(0.09) : Color.black.opacity(0.07)) : Color.clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 7)
+                    .strokeBorder(isSelected ? (isDark ? Color.white.opacity(0.12) : Color.black.opacity(0.09)) : Color.clear, lineWidth: 0.8)
             )
         }
         .buttonStyle(.plain)
@@ -4021,17 +3930,67 @@ struct AccentColorDot: View {
     }
 }
 
+// MARK: - Theme Preset Chip
+struct ThemePresetChip: View {
+    @ObservedObject var state = AppState.shared
+    let id: String
+    let icon: String
+    let label: String
+
+    var isSelected: Bool { state.appTheme == id }
+
+    var body: some View {
+        Button(action: {
+            state.appTheme = id
+            state.saveConfigToDisk()
+        }) {
+            HStack(spacing: 3) {
+                Image(systemName: icon)
+                    .font(.system(size: 8))
+                Text(label)
+                    .font(.system(size: 8.5, weight: isSelected ? .bold : .medium))
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
+            .padding(.horizontal, 3)
+            .background(isSelected ? state.hudAccentColor.opacity(0.18) : Color.primary.opacity(0.05))
+            .overlay(
+                RoundedRectangle(cornerRadius: 5)
+                    .strokeBorder(isSelected ? state.hudAccentColor.opacity(0.55) : Color.primary.opacity(0.08), lineWidth: 0.8)
+            )
+            .cornerRadius(5)
+            .foregroundColor(isSelected ? state.hudAccentColor : .primary)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 // MARK: - Tab Pane 4: Settings & Preferences
 struct SettingsTabPane: View {
     @ObservedObject var state = AppState.shared
 
     var body: some View {
-        VStack(spacing: 9) {
+        VStack(spacing: 8) {
             // Header
             HStack {
                 Text("Preferences")
                     .font(.system(size: 13, weight: .bold, design: .rounded))
                 Spacer()
+            }
+
+            // Theme & Appearance
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Appearance & Theme:")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(.secondary)
+
+                HStack(spacing: 4) {
+                    ThemePresetChip(id: "system", icon: "circle.lefthalf.filled", label: "Auto")
+                    ThemePresetChip(id: "dark", icon: "moon.stars.fill", label: "Premium Dark")
+                    ThemePresetChip(id: "light", icon: "sun.max.fill", label: "Light")
+                }
             }
 
             // Shortcuts
@@ -4332,7 +4291,7 @@ struct PositionPresetChip: View {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static var shared: AppDelegate!
     private var statusItem: NSStatusItem!
-    private var popover: NSPopover!
+    var popover: NSPopover!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
