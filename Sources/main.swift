@@ -147,9 +147,34 @@ final class AppState: ObservableObject {
     @AppStorage("lmstudio_url") var lmStudioUrl: String = "http://127.0.0.1:1234"
     @AppStorage("lmstudio_model") var lmStudioModel: String = "local-model"
     @AppStorage("use_llm_polish") var useLlmPolish: Bool = true
-    @AppStorage("custom_vocab") var customVocab: String = "how far, abeg, naira, GitHub, PR, Velox, model, models"
+    @AppStorage("custom_vocab") var customVocab: String = "Vozia, how far, abeg, naira, GitHub, PR, Velox, Vercel, LiveKit, Conduit, Docker, Next.js, CI/CD, Supabase, Tailwind, TypeScript, React, model, models"
     @AppStorage("auto_paste") var autoPaste: Bool = true
     @Published var openRouterBalanceText: String = "OpenRouter"
+
+    var customVocabList: [String] {
+        customVocab
+            .components(separatedBy: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    func addCustomWord(_ word: String) {
+        let trimmed = word.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        var current = customVocabList
+        if !current.contains(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame }) {
+            current.insert(trimmed, at: 0)
+            self.customVocab = current.joined(separator: ", ")
+            saveConfigToDisk()
+        }
+    }
+
+    func removeCustomWord(_ word: String) {
+        var current = customVocabList
+        current.removeAll { $0.caseInsensitiveCompare(word) == .orderedSame }
+        self.customVocab = current.joined(separator: ", ")
+        saveConfigToDisk()
+    }
 
     // HUD Customization
     @AppStorage("hud_position") var hudPosition: String = "bottom_center" // "bottom_left", "bottom_center", "bottom_right"
@@ -4669,6 +4694,55 @@ struct DictateTabPane: View {
                     .background(Color.primary.opacity(0.025))
                     .cornerRadius(4)
                 }
+
+                // Custom Words Quick Bar
+                HStack(spacing: 4) {
+                    Image(systemName: "character.book.closed.fill")
+                        .font(.system(size: 7.5))
+                        .foregroundColor(state.hudAccentColor)
+                    Text("Vocab:")
+                        .font(.system(size: 8, weight: .medium))
+                        .foregroundColor(.secondary)
+
+                    let words = state.customVocabList
+                    HStack(spacing: 3) {
+                        ForEach(words.prefix(2), id: \.self) { w in
+                            Text(w)
+                                .font(.system(size: 7.5, weight: .medium))
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1.5)
+                                .background(Color.primary.opacity(0.06))
+                                .cornerRadius(3)
+                        }
+                        if words.count > 2 {
+                            Text("+\(words.count - 2)")
+                                .font(.system(size: 7.5, weight: .medium))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+
+                    Spacer()
+
+                    Button(action: { state.activeTab = .settings }) {
+                        HStack(spacing: 2) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 6.5, weight: .bold))
+                            Text("Add Word")
+                                .font(.system(size: 7.5, weight: .semibold))
+                        }
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(state.hudAccentColor.opacity(0.12))
+                        .foregroundColor(state.hudAccentColor)
+                        .cornerRadius(4)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Add custom words and tech terms in Preferences")
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(Color.primary.opacity(0.025))
+                .cornerRadius(4)
             }
 
             // Previous Dictation Recovery Pill
@@ -5373,12 +5447,176 @@ struct PositionPresetChip: View {
     }
 }
 
+// MARK: - Flow / Wrapping Layout
+@available(macOS 13.0, *)
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 4
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? 300
+        var height: CGFloat = 0
+        var x: CGFloat = 0
+        var rowHeight: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x + size.width > width && x > 0 {
+                x = 0
+                height += rowHeight + spacing
+                rowHeight = 0
+            }
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        height += rowHeight
+        return CGSize(width: width, height: max(height, rowHeight))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var rowHeight: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x + size.width > bounds.maxX && x > bounds.minX {
+                x = bounds.minX
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+    }
+}
+
+// MARK: - Custom Vocabulary & Words Card
+struct CustomVocabSettingsCard: View {
+    @ObservedObject var state = AppState.shared
+    @State private var newWordText: String = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                HStack(spacing: 4) {
+                    Image(systemName: "character.book.closed.fill")
+                        .font(.system(size: 8))
+                        .foregroundColor(state.hudAccentColor)
+                    Text("CUSTOM VOCABULARY & WORDS")
+                        .font(.system(size: 7.5, weight: .bold, design: .rounded))
+                        .foregroundColor(.secondary.opacity(0.8))
+                        .tracking(0.8)
+                }
+                Spacer()
+                Text("\(state.customVocabList.count) terms")
+                    .font(.system(size: 8, weight: .medium, design: .monospaced))
+                    .foregroundColor(.secondary)
+            }
+
+            // Input Row
+            HStack(spacing: 5) {
+                TextField("Add word (e.g. Vozia, Vercel)...", text: $newWordText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 8.5))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 4)
+                    .background(Color.primary.opacity(0.04))
+                    .cornerRadius(5)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 5)
+                            .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.8)
+                    )
+                    .onSubmit {
+                        submitWord()
+                    }
+
+                Button(action: {
+                    submitWord()
+                }) {
+                    HStack(spacing: 2) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 7, weight: .bold))
+                        Text("Add")
+                            .font(.system(size: 8, weight: .semibold))
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(state.hudAccentColor.opacity(0.18))
+                    .foregroundColor(state.hudAccentColor)
+                    .cornerRadius(5)
+                }
+                .buttonStyle(.plain)
+                .disabled(newWordText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+
+            // Word Chips Flow
+            let list = state.customVocabList
+            if list.isEmpty {
+                Text("No custom words yet. Add names, slang, or technical terms.")
+                    .font(.system(size: 7.5))
+                    .foregroundColor(.secondary.opacity(0.6))
+                    .padding(.vertical, 2)
+            } else {
+                FlowLayout(spacing: 4) {
+                    ForEach(list, id: \.self) { word in
+                        HStack(spacing: 3) {
+                            Text(word)
+                                .font(.system(size: 8, weight: .medium))
+                                .lineLimit(1)
+                            Button(action: {
+                                state.removeCustomWord(word)
+                            }) {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 6, weight: .bold))
+                                    .foregroundColor(.secondary.opacity(0.8))
+                            }
+                            .buttonStyle(.plain)
+                            .help("Remove \(word)")
+                        }
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2.5)
+                        .background(Color.primary.opacity(0.05))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4)
+                                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.8)
+                        )
+                        .cornerRadius(4)
+                    }
+                }
+            }
+
+            Text("Custom words prime Whisper STT and ensure correct spelling and casing.")
+                .font(.system(size: 7))
+                .foregroundColor(.secondary.opacity(0.6))
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.primary.opacity(0.025))
+        .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.8)
+        )
+    }
+
+    private func submitWord() {
+        let trimmed = newWordText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            state.addCustomWord(trimmed)
+            newWordText = ""
+        }
+    }
+}
+
 // MARK: - Tab Pane 4: Settings & Preferences
 struct SettingsTabPane: View {
     @ObservedObject var state = AppState.shared
 
     var body: some View {
-        VStack(spacing: 9) {
+        ScrollView(showsIndicators: false) {
+            VStack(spacing: 9) {
             // Header
             HStack {
                 Text("Preferences")
@@ -5498,7 +5736,10 @@ struct SettingsTabPane: View {
                     .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.8)
             )
 
-            // 3. Activation Shortcut Card
+            // 3. Custom Vocabulary & Words Card
+            CustomVocabSettingsCard()
+
+            // 4. Activation Shortcut Card
             VStack(alignment: .leading, spacing: 5) {
                 Text("GLOBAL ACTIVATION SHORTCUT")
                     .font(.system(size: 7.5, weight: .bold, design: .rounded))
@@ -5741,7 +5982,9 @@ struct SettingsTabPane: View {
                 .focusable(false)
             }
         }
+        .padding(.bottom, 6)
     }
+}
 
     private func positionDisplayName(_ id: String, offset: Double) -> String {
         let offsetStr = offset == 0 ? "" : (offset > 0 ? " (+\(Int(offset))px)" : " (\(Int(offset))px)")
