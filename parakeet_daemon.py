@@ -370,24 +370,37 @@ def wispr_smart_format(text: str) -> str:
     t = re.sub(r"\b(\d+)\s*am\b", r"\1 AM", t, flags=re.IGNORECASE)
     t = re.sub(r"\b(\d+)\s*pm\b", r"\1 PM", t, flags=re.IGNORECASE)
 
-    # 5. Fix acoustic confusion of "module" for "model" in AI/software speech
+    # 5. Fix acoustic confusion of tech terms and "module" for "model"
+    t = re.sub(r"(?i)\b(?:it\s+for\s+sale|it\s+by\s+itself)\b(?=.*(?:deploy|host|server|project|next\.?js|frontend|react|app|site|domain))", "Vercel", t)
+    t = re.sub(r"(?i)\blight\s*kit\b", "LiveKit", t)
+    t = re.sub(r"(?i)\bremove\s+all\s+your\s+necessary\b", "remove all unnecessary", t)
     t = re.sub(r"\b(bigger|smaller|large|larger|AI|ML|speech|language|Whisper|Qwen|LLM|Muse|foundational|new|this|that|the)\s+module(s)?\b", r"\1 model\2", t, flags=re.IGNORECASE)
     t = re.sub(r"\bmodule(s)?\s+(training|inference|weights|architecture|accuracy|parameters)\b", r"model\1 \2", t, flags=re.IGNORECASE)
 
     # 6. Fix common developer and technical names
     tech_map = {
         r"\bgithub\b": "GitHub",
+        r"\bvercel\b": "Vercel",
+        r"\blivekit\b": "LiveKit",
+        r"\bconduit\b": "Conduit",
+        r"\bdocker\b": "Docker",
+        r"\bnext\s*js\b": "Next.js",
+        r"\bnextjs\b": "Next.js",
+        r"\btailwind\b": "Tailwind",
+        r"\bsupabase\b": "Supabase",
+        r"\bci\s*\/?\s*cd\b": "CI/CD",
         r"\bjavascript\b": "JavaScript",
         r"\btypescript\b": "TypeScript",
         r"\bmacos\b": "macOS",
         r"\bapi\b": "API",
         r"\bui\b": "UI",
         r"\bai\b": "AI",
-        r"\bvscode\b": "VSCode",
+        r"\bvscode\b": "VS Code",
         r"\bhtml\b": "HTML",
         r"\bcss\b": "CSS",
         r"\bopenrouter\b": "OpenRouter",
         r"\bwhisperflow\b": "WhisperFlow",
+        r"\bvelox\b": "Velox",
         r"\bnaira\b": "Naira",
         r"\bollama\b": "Ollama",
     }
@@ -516,7 +529,13 @@ def polish_text_unified(raw_text: str, cfg: dict) -> tuple[str, float, str]:
         "2. Structure: Put numbered lists (1., 2., 3.) and bullet points on separate new lines. Keep short introductory labels like 'Test 1:' or 'Part 1:' inline with their sentence rather than breaking them into orphaned single-word lines.\n"
         "3. Spoken correction: Resolve mid-sentence self-corrections (e.g., 'meet at 10 actually make that 3' -> 'meet at 3 PM').\n"
         "4. Verbal fillers: Seamlessly remove verbal fillers ('um', 'uh', 'you know', 'in order to blah').\n"
-        "5. Phonetic & Slang Healing: Acoustic STT often mishears accented words or colloquial slang as similar English words. Cross-reference with the Custom Vocabulary / context hints to repair obvious phonetic STT slips (e.g. 'half hour abeg' -> 'How far, abeg'; 'nearer' near money -> 'naira'; 'wicked' -> 'wicked'; in AI, tech, or programming contexts, restore 'model/models' when STT mishears it as 'module/modules', such as 'bigger module' -> 'bigger model', 'Whisper module' -> 'Whisper model', or 'language module' -> 'language model').\n"
+        "5. Phonetic & Tech Healing: Acoustic STT often mishears accented words or technical terms. Cross-reference with context hints to repair acoustic slips:\n"
+        "   - 'it for sale' or 'it by itself' (near deployment, hosting, cloud, server, project, Next.js) -> 'Vercel'\n"
+        "   - 'light kit' or 'like it' (near audio, stream, WebRTC, call, Conduit) -> 'LiveKit'\n"
+        "   - 'country' or 'country documentation' (near WebRTC, streaming, LiveKit) -> 'Conduit' / 'Conduit documentation'\n"
+        "   - 'remove your necessary' -> 'remove unnecessary'\n"
+        "   - In AI/tech contexts, restore 'model/models' when STT mishears it as 'module/modules' (e.g. 'Whisper module' -> 'Whisper model')\n"
+        "   - Preserve Nigerian slang & colloquialisms (e.g. 'how far, abeg', 'naira') and modern developer tools (Vercel, LiveKit, Conduit, Docker, GitHub Actions, CI/CD, Next.js, Supabase, Tailwind, TypeScript).\n"
         "6. Tone & Completeness: Retain 100% of the speaker's original vocabulary, colloquialisms, and intent. Never summarize, omit facts, or invent words.\n"
         "7. Output: Return ONLY the polished text with no conversational preamble, no quotes, and no commentary."
     )
@@ -615,7 +634,7 @@ def polish_text_unified(raw_text: str, cfg: dict) -> tuple[str, float, str]:
                 {"role": "user", "content": user_prompt},
             ],
             "temperature": 0.1,
-            "max_tokens": 1024,
+            "max_tokens": min(max(len(raw_text.split()) * 3, 100), 350),
         }
         try:
             resp = HTTP_CLIENT.post(
@@ -787,13 +806,37 @@ def inference_worker():
                 }))
                 continue
 
+            # 2. Digital AGC / Audio Normalization:
+            # If the user speaks at low volume or far from the mic (e.g. -44 dBFS, peak amp < 18000),
+            # boost audio cleanly so consonant formants (V, F, S, K, T in tech words like Vercel) are crisp.
+            effective_audio_path = audio_path
+            if 60 <= max_amp < 18000 and len(samples) > 0:
+                try:
+                    gain = min(25000.0 / float(max_amp), 12.0) # up to +21.5 dB clean boost
+                    boosted = np.clip(samples.astype(np.float32) * gain, -32767, 32767).astype(np.int16)
+                    norm_path = "/tmp/parakeet_normalized.wav"
+                    with wave.open(norm_path, "wb") as nw:
+                        nw.setnchannels(1)
+                        nw.setsampwidth(2)
+                        nw.setframerate(fr if fr > 0 else 16000)
+                        nw.writeframes(boosted.tobytes())
+                    effective_audio_path = norm_path
+                    print(f"[WhisperWorker] Boosted quiet audio by {20*np.log10(gain):.1f}dB (peak {max_amp} -> {int(max_amp*gain)})", flush=True)
+                except Exception as ex:
+                    print(f"[WhisperWorker] Audio normalization warning: {ex}", flush=True)
+
             # Screen Context Awareness: extract on-screen cues
             context_app = req_config.get("context_app", "").strip()
             context_title = req_config.get("context_title", "").strip()
             context_text = req_config.get("context_selected_text", "").strip()
             custom_vocab = req_config.get("custom_vocab", "").strip()
+            if not custom_vocab:
+                custom_vocab = (load_config().get("custom_vocab") or "").strip()
 
             cues = []
+            # Tech & developer vocabulary baseline so Whisper's acoustic decoder recognizes modern tooling:
+            tech_baseline = "Vercel, LiveKit, Conduit, Next.js, Docker, GitHub Actions, CI/CD, Supabase, Tailwind, React, TypeScript, PR, API"
+            cues.append(tech_baseline)
             if custom_vocab:
                 cues.append(custom_vocab)
             if context_app:
@@ -808,7 +851,9 @@ def inference_worker():
             groq_key = (req_config.get("groq_key") or "").strip()
             if not groq_key:
                 groq_key = (load_config().get("groq_key") or "").strip()
-            use_groq = bool(groq_key and req_config.get("stt_engine", "groq") != "local_mlx")
+            # Only use local MLX if the user explicitly chose local in settings
+            force_local = (req_config.get("stt_engine") == "local_mlx" or load_config().get("stt_engine") == "local_mlx")
+            use_groq = bool(groq_key and not force_local)
             raw_text = ""
             stt_ms = 0.0
             stt_model_name = "Whisper Large v3 (Groq LPU)"
@@ -817,17 +862,25 @@ def inference_worker():
 
             if use_groq:
                 try:
-                    raw_text, stt_ms = transcribe_with_groq(audio_path, groq_key, prompt=prompt_str, language=language)
+                    raw_text, stt_ms = transcribe_with_groq(effective_audio_path, groq_key, prompt=prompt_str, language=language)
                 except Exception as e:
-                    print(f"[WhisperWorker] Groq STT error: {e}. Falling back to local MLX...", flush=True)
-                    use_groq = False
+                    # Retry once after brief pause
+                    print(f"[WhisperWorker] Groq STT initial error: {e}. Retrying...", flush=True)
+                    time.sleep(0.5)
+                    try:
+                        raw_text, stt_ms = transcribe_with_groq(effective_audio_path, groq_key, prompt=prompt_str, language=language)
+                    except Exception as e2:
+                        if force_local:
+                            use_groq = False
+                        else:
+                            raise RuntimeError(f"Groq Cloud STT failed: {e2}")
 
             if not use_groq:
                 stt_model_name = "Whisper Large v3 Turbo (MLX Metal GPU)"
                 t_stt = time.perf_counter()
-                initial_prompt = sanitize_custom_vocab(custom_vocab)
+                initial_prompt = sanitize_custom_vocab(prompt_str)
                 result = mlx_whisper.transcribe(
-                    audio_path,
+                    effective_audio_path,
                     path_or_hf_repo=MODEL_ID,
                     language=language or "en",
                     initial_prompt=initial_prompt,
