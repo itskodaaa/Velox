@@ -50,6 +50,15 @@ final class AppState: ObservableObject {
     @AppStorage("selected_mic") var selectedMicName: String = "System Default"
     @Published var availableMicDevices: [AudioInputDevice] = []
 
+    // Groq Rate Limits & Usage Tracking
+    @Published var groqTokensRemaining: Int = 8000
+    @Published var groqTokensLimit: Int = 8000
+    @Published var groqRequestsRemaining: Int = 1000
+    @Published var groqRequestsLimit: Int = 1000
+    @Published var groqResetTokens: String = ""
+    @Published var groqResetRequests: String = ""
+    @Published var groqUsagePercent: Int = 100
+
     // Menu Bar Control Center Active Tab
     @Published var activeTab: ControlCenterTab = .dictate
 
@@ -350,6 +359,44 @@ final class AppState: ObservableObject {
                 } else {
                     self.openRouterBalanceText = "⚠️ Key 401"
                 }
+            }
+        }.resume()
+    }
+
+    func updateRateLimits(json: [String: Any]) {
+        if let rem = json["remaining_tokens"] as? Int {
+            self.groqTokensRemaining = rem
+        }
+        if let lim = json["limit_tokens"] as? Int {
+            self.groqTokensLimit = lim
+        }
+        if let rRem = json["remaining_requests"] as? Int {
+            self.groqRequestsRemaining = rRem
+        }
+        if let rLim = json["limit_requests"] as? Int {
+            self.groqRequestsLimit = rLim
+        }
+        if let rTok = json["reset_tokens"] as? String {
+            self.groqResetTokens = rTok
+        }
+        if let rReq = json["reset_requests"] as? String {
+            self.groqResetRequests = rReq
+        }
+        if self.groqTokensLimit > 0 {
+            self.groqUsagePercent = max(0, min(100, Int((Double(self.groqTokensRemaining) / Double(self.groqTokensLimit)) * 100.0)))
+        }
+    }
+
+    func refreshGroqRateLimits() {
+        let urlStr = "http://127.0.0.1:18765/api/groq_limits"
+        guard let url = URL(string: urlStr) else { return }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 3.0
+        URLSession.shared.dataTask(with: req) { data, _, _ in
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+            DispatchQueue.main.async {
+                self.updateRateLimits(json: json)
             }
         }.resume()
     }
@@ -931,6 +978,10 @@ final class DictationService {
                         FloatingHUDController.shared.hide()
                     }
                     return
+                }
+
+                if let limits = json["rate_limits"] as? [String: Any] {
+                    AppState.shared.updateRateLimits(json: limits)
                 }
 
                 let rawFinal = (json["final_text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -4589,6 +4640,35 @@ struct DictateTabPane: View {
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
+
+                // Live Groq Cloud Quota Meter
+                if state.provider == "groq" || state.sttEngine == "groq" {
+                    HStack(spacing: 5) {
+                        Image(systemName: "gauge.with.needle")
+                            .font(.system(size: 7.5))
+                            .foregroundColor(state.groqTokensRemaining < 2000 ? .orange : state.hudAccentColor)
+                        Text("Groq Cloud:")
+                            .font(.system(size: 8, weight: .medium))
+                            .foregroundColor(.secondary)
+                        Text("\(state.groqTokensRemaining.formatted()) / \(state.groqTokensLimit.formatted()) tokens")
+                            .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                            .foregroundColor(state.groqTokensRemaining < 1500 ? .orange : .primary.opacity(0.85))
+                        Spacer()
+                        GeometryReader { geo in
+                            let ratio = state.groqTokensLimit > 0 ? CGFloat(state.groqTokensRemaining) / CGFloat(state.groqTokensLimit) : 1.0
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(Color.primary.opacity(0.08))
+                                Capsule().fill(ratio < 0.25 ? Color.orange : (ratio < 0.1 ? Color.red : Color.green.opacity(0.85)))
+                                    .frame(width: max(2, geo.size.width * min(1.0, max(0.0, ratio))))
+                            }
+                        }
+                        .frame(width: 32, height: 4)
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Color.primary.opacity(0.025))
+                    .cornerRadius(4)
+                }
             }
 
             // Previous Dictation Recovery Pill
@@ -4647,6 +4727,9 @@ struct DictateTabPane: View {
             .padding(.vertical, 4)
             .background(Color.primary.opacity(0.03))
             .cornerRadius(5)
+        }
+        .onAppear {
+            state.refreshGroqRateLimits()
         }
     }
 }
@@ -5531,7 +5614,76 @@ struct SettingsTabPane: View {
                     .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.8)
             )
 
-            // 5. Web Dashboard & Advanced Settings
+            // 5. Groq Cloud Quota Card
+            VStack(alignment: .leading, spacing: 5) {
+                HStack {
+                    Text("GROQ CLOUD USAGE & RATE LIMITS")
+                        .font(.system(size: 7.5, weight: .bold, design: .rounded))
+                        .foregroundColor(.secondary.opacity(0.8))
+                        .tracking(0.8)
+                    Spacer()
+                    Button(action: { state.refreshGroqRateLimits() }) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .font(.system(size: 7))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Refresh Groq Quota")
+                }
+
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Tokens Remaining")
+                            .font(.system(size: 7.5))
+                            .foregroundColor(.secondary)
+                        Text("\(state.groqTokensRemaining.formatted()) / \(state.groqTokensLimit.formatted())")
+                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .foregroundColor(state.groqTokensRemaining < 1500 ? .orange : .primary)
+                    }
+                    Spacer()
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text("Requests Remaining")
+                            .font(.system(size: 7.5))
+                            .foregroundColor(.secondary)
+                        Text("\(state.groqRequestsRemaining.formatted()) / \(state.groqRequestsLimit.formatted())")
+                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .foregroundColor(.primary)
+                    }
+                }
+
+                GeometryReader { geo in
+                    let ratio = state.groqTokensLimit > 0 ? CGFloat(state.groqTokensRemaining) / CGFloat(state.groqTokensLimit) : 1.0
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.primary.opacity(0.08))
+                        Capsule().fill(ratio < 0.25 ? Color.orange : (ratio < 0.1 ? Color.red : Color.green.opacity(0.85)))
+                            .frame(width: max(2, geo.size.width * min(1.0, max(0.0, ratio))))
+                    }
+                }
+                .frame(height: 4)
+
+                HStack {
+                    if !state.groqResetTokens.isEmpty {
+                        Text("Tokens reset: \(state.groqResetTokens)")
+                            .font(.system(size: 7))
+                            .foregroundColor(.secondary.opacity(0.7))
+                    }
+                    Spacer()
+                    Link("Groq Console ↗", destination: URL(string: "https://console.groq.com/settings/limits")!)
+                        .font(.system(size: 7.5, weight: .medium))
+                        .foregroundColor(state.hudAccentColor)
+                }
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.primary.opacity(0.025))
+            .cornerRadius(8)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.8)
+            )
+
+            // 6. Web Dashboard & Advanced Settings
             Button(action: {
                 if let url = URL(string: "http://127.0.0.1:18765/history#settings") {
                     NSWorkspace.shared.open(url)

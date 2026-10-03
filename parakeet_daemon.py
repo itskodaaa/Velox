@@ -267,7 +267,7 @@ def sanitize_custom_vocab(custom_vocab_raw: str) -> Optional[str]:
 def sanitize_transcription(raw_text: str, duration_sec: float = 0.0, rms: float = 100.0) -> str:
     """
     Detect and eliminate Whisper autoregressive repetition loops, silence hallucinations,
-    and ghost outputs (e.g. 'The.', 'You.', '3k, 3k, 3k...').
+    and ghost outputs (e.g. 'The.', 'You.', '3k, 3k, 3k...', 'Mmmmmmm', 'Petsenem').
     """
     if not raw_text:
         return ""
@@ -281,15 +281,32 @@ def sanitize_transcription(raw_text: str, duration_sec: float = 0.0, rms: float 
         "thank you for watching", "thank you for watching.", "subscribe", "subscribe.",
         "please subscribe", "please subscribe.", "bye", "bye.", "bye bye", "bye bye.",
         "continue", "continue.", "continue...", "to be continued", "to be continued.",
-        "...", "..", ".", "♪", "[music]", "(music)", "[applause]", "[laughter]"
+        "...", "..", ".", "♪", "[music]", "(music)", "[applause]", "[laughter]",
+        "petsenem", "petsenem.", "gouzez", "gouzez.", "transcript", "transcription",
+        "glossary and glossary", "glossary and glossary.", "intestine, intestine",
+        "intestine, intestine.", "subtitles by", "subtitles by.", "translated by",
+        "translated by."
     }
 
     clean_lower = text.lower().strip()
-    if clean_lower in phantom_exact:
-        # If the recording was longer than 0.9s and produced only a single phantom word, or audio energy was low
-        if duration_sec > 0.9 or rms < 85.0 or clean_lower in ("the", "the.", "a", "a.", "an", "an.", "...", "..", ".", "thank you for watching", "thank you for watching.", "subscribe", "subscribe.", "continue", "continue.", "continue...", "to be continued", "to be continued."):
+    if clean_lower in phantom_exact or clean_lower.startswith("subtitles by") or clean_lower.startswith("translated by"):
+        # If the recording was longer than 0.8s and produced only a single phantom word, or audio energy was low (<90.0)
+        if duration_sec > 0.8 or rms < 90.0 or clean_lower in ("the", "the.", "a", "a.", "an", "an.", "...", "..", ".", "petsenem", "petsenem.", "gouzez", "gouzez.", "transcript", "transcription", "thank you for watching", "thank you for watching.", "subscribe", "subscribe.", "continue", "continue.", "continue...", "to be continued", "to be continued.", "glossary and glossary", "intestine, intestine", "intestine, intestine."):
             print(f"[Sanitize] Suppressed phantom silence hallucination '{text}' (duration={duration_sec:.1f}s, rms={rms:.1f})", flush=True)
             return ""
+
+    # Character repetition hallucination (e.g. 'Mmmmmmm', 'ahhhhhh', 'zzzzz')
+    if re.search(r"(?i)(.)\1{3,}", text):
+        clean_no_repeat = re.sub(r"(?i)(.)\1{2,}", r"\1", text)
+        if len(clean_no_repeat.strip()) <= 3 or rms < 85.0:
+            print(f"[Sanitize] Suppressed character repetition hallucination '{text}'", flush=True)
+            return ""
+        text = re.sub(r"(?i)(.)\1{2,}", r"\1", text)
+
+    # Low-energy single-word duplicate stutter (e.g. 'word, word' on click or background noise)
+    if (duration_sec < 1.2 or rms < 85.0) and re.match(r"^(?i)([\w\'-]+)[,\s]+\1[.,!?]*$", text):
+        print(f"[Sanitize] Suppressed low-energy duplicate stutter hallucination '{text}'", flush=True)
+        return ""
 
     # Check if text is solely bracketed audio labels e.g. [Music], (Laughter), [Applause]
     if re.match(r"^[\(\[\{].*?[\)\]\}]$", text):
@@ -374,12 +391,20 @@ def wispr_smart_format(text: str) -> str:
     t = re.sub(r"(?i)\b(?:it\s+for\s+sale|it\s+by\s+itself)\b(?=.*(?:deploy|host|server|project|next\.?js|frontend|react|app|site|domain))", "Vercel", t)
     t = re.sub(r"(?i)\blight\s*kit\b", "LiveKit", t)
     t = re.sub(r"(?i)\bremove\s+all\s+your\s+necessary\b", "remove all unnecessary", t)
+    t = re.sub(r"(?i)\b(?:limit\s+(?:for\s+)?broke|broke\s+limit)\b", "Groq limit", t)
+    t = re.sub(r"(?i)\b(?:a\s+limit\s+for\s+broke)\b", "a limit for Groq", t)
+    t = re.sub(r"(?i)\b(?:set|see)\s+a\s+limit\s+for\s+broke\b", "see the Groq limit", t)
+    t = re.sub(r"(?i)\bsee\s+the\s+broke\s+limit\b", "see the Groq limit", t)
+    t = re.sub(r"(?i)\blimit\s+for\s+groq\b", "Groq limit", t)
     t = re.sub(r"\b(bigger|smaller|large|larger|AI|ML|speech|language|Whisper|Qwen|LLM|Muse|foundational|new|this|that|the)\s+module(s)?\b", r"\1 model\2", t, flags=re.IGNORECASE)
     t = re.sub(r"\bmodule(s)?\s+(training|inference|weights|architecture|accuracy|parameters)\b", r"model\1 \2", t, flags=re.IGNORECASE)
 
     # 6. Fix common developer and technical names
     tech_map = {
         r"\bgithub\b": "GitHub",
+        r"\bgroq\b": "Groq",
+        r"\bgroq\s+api\b": "Groq API",
+        r"\bgroq\s+limit\b": "Groq limit",
         r"\bvercel\b": "Vercel",
         r"\blivekit\b": "LiveKit",
         r"\bconduit\b": "Conduit",
@@ -506,6 +531,76 @@ def validate_polished_output(raw_text: str, polished_text: str) -> bool:
     return True
 
 
+GLOBAL_GROQ_LIMITS = {
+    "limit_tokens": 8000,
+    "remaining_tokens": 8000,
+    "limit_requests": 1000,
+    "remaining_requests": 1000,
+    "reset_tokens": "0s",
+    "reset_requests": "0s",
+    "last_updated": 0.0,
+}
+
+
+def update_groq_limits_from_headers(headers: dict):
+    global GLOBAL_GROQ_LIMITS
+    updated = False
+    for k, v in headers.items():
+        lk = k.lower()
+        if lk == "x-ratelimit-limit-tokens":
+            try:
+                GLOBAL_GROQ_LIMITS["limit_tokens"] = int(v)
+                updated = True
+            except Exception:
+                pass
+        elif lk == "x-ratelimit-remaining-tokens":
+            try:
+                GLOBAL_GROQ_LIMITS["remaining_tokens"] = int(v)
+                updated = True
+            except Exception:
+                pass
+        elif lk == "x-ratelimit-limit-requests":
+            try:
+                GLOBAL_GROQ_LIMITS["limit_requests"] = int(v)
+                updated = True
+            except Exception:
+                pass
+        elif lk == "x-ratelimit-remaining-requests":
+            try:
+                GLOBAL_GROQ_LIMITS["remaining_requests"] = int(v)
+                updated = True
+            except Exception:
+                pass
+        elif lk == "x-ratelimit-reset-tokens":
+            GLOBAL_GROQ_LIMITS["reset_tokens"] = str(v)
+            updated = True
+        elif lk == "x-ratelimit-reset-requests":
+            GLOBAL_GROQ_LIMITS["reset_requests"] = str(v)
+            updated = True
+    if updated:
+        GLOBAL_GROQ_LIMITS["last_updated"] = time.time()
+
+
+def get_groq_rate_limits() -> dict:
+    global GLOBAL_GROQ_LIMITS
+    # If not updated yet, probe once to fetch accurate headers
+    if GLOBAL_GROQ_LIMITS["last_updated"] == 0.0:
+        groq_key = load_config().get("groq_key", "").strip()
+        if groq_key:
+            try:
+                probe_resp = HTTP_CLIENT.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
+                    json={"model": "qwen/qwen3.8-27b", "messages": [{"role": "user", "content": "hi"}], "max_tokens": 1},
+                    timeout=3.0,
+                )
+                if probe_resp.status_code == 200:
+                    update_groq_limits_from_headers(probe_resp.headers)
+            except Exception:
+                pass
+    return dict(GLOBAL_GROQ_LIMITS)
+
+
 def polish_text_unified(raw_text: str, cfg: dict) -> tuple[str, float, str]:
     """Unified LLM polisher supporting OpenRouter, Ollama, LM Studio / Bionic, or local rules."""
     if not raw_text.strip():
@@ -530,14 +625,21 @@ def polish_text_unified(raw_text: str, cfg: dict) -> tuple[str, float, str]:
         "3. Spoken correction: Resolve mid-sentence self-corrections (e.g., 'meet at 10 actually make that 3' -> 'meet at 3 PM').\n"
         "4. Verbal fillers: Seamlessly remove verbal fillers ('um', 'uh', 'you know', 'in order to blah').\n"
         "5. Phonetic & Tech Healing: Acoustic STT often mishears accented words or technical terms. Cross-reference with context hints to repair acoustic slips:\n"
+        "   - 'Groq', 'Groq limit', 'Groq API' (AI inference cloud, LPU, rate limits)\n"
         "   - 'it for sale' or 'it by itself' (near deployment, hosting, cloud, server, project, Next.js) -> 'Vercel'\n"
         "   - 'light kit' or 'like it' (near audio, stream, WebRTC, call, Conduit) -> 'LiveKit'\n"
         "   - 'country' or 'country documentation' (near WebRTC, streaming, LiveKit) -> 'Conduit' / 'Conduit documentation'\n"
         "   - 'remove your necessary' -> 'remove unnecessary'\n"
         "   - In AI/tech contexts, restore 'model/models' when STT mishears it as 'module/modules' (e.g. 'Whisper module' -> 'Whisper model')\n"
-        "   - Preserve Nigerian slang & colloquialisms (e.g. 'how far, abeg', 'naira') and modern developer tools (Vercel, LiveKit, Conduit, Docker, GitHub Actions, CI/CD, Next.js, Supabase, Tailwind, TypeScript).\n"
-        "6. Tone & Completeness: Retain 100% of the speaker's original vocabulary, colloquialisms, and intent. Never summarize, omit facts, or invent words.\n"
-        "7. Output: Return ONLY the polished text with no conversational preamble, no quotes, and no commentary."
+        "   - Preserve Nigerian slang & colloquialisms (e.g. 'how far, abeg', 'naira') and modern developer tools (Groq, Vercel, LiveKit, Conduit, Docker, GitHub Actions, CI/CD, Next.js, Supabase, Tailwind, TypeScript).\n"
+        "6. CRITICAL PERSPECTIVE & PRONOUN INTEGRITY:\n"
+        "   - NEVER alter, invert, or flip grammatical perspective, point-of-view, or pronouns (I, you, he, she, we, they).\n"
+        "   - If the speaker says 'You should go test it out', output 'You should go test it out.' NEVER rewrite 'you' into 'I' or 'we'.\n"
+        "   - If the speaker asks 'Can you...', 'Did you...', or gives instructions to someone else, preserve 'you' verbatim.\n"
+        "   - The speaker may be addressing someone else, dictating an email, or messaging a teammate. Maintain the exact subject, speaker, and audience.\n"
+        "   - Do NOT convert instructions directed at another person into personal reminders or first-person statements.\n"
+        "7. Tone & Completeness: Retain 100% of the speaker's original vocabulary, colloquialisms, and intent. Never summarize, omit facts, or invent words.\n"
+        "8. Output: Return ONLY the polished text with no conversational preamble, no quotes, and no commentary."
     )
     if custom_vocab.strip():
         sys_msg += f"\nCustom vocabulary / context hints: {custom_vocab.strip()}"
@@ -648,6 +750,7 @@ def polish_text_unified(raw_text: str, cfg: dict) -> tuple[str, float, str]:
             )
             llm_ms = round((time.perf_counter() - t_start) * 1000, 1)
             if resp.status_code == 200:
+                update_groq_limits_from_headers(resp.headers)
                 data = resp.json()
                 polished = data["choices"][0]["message"]["content"].strip()
                 if polished.startswith('"') and polished.endswith('"') and len(polished) > 2:
@@ -741,6 +844,7 @@ def transcribe_with_groq(audio_path: str, groq_key: str, prompt: str = "", langu
         )
     latency_ms = round((time.perf_counter() - t0) * 1000, 1)
     if resp.status_code == 200:
+        update_groq_limits_from_headers(resp.headers)
         return resp.json().get("text", "").strip(), latency_ms
     else:
         raise RuntimeError(f"Groq API error {resp.status_code}: {resp.text}")
@@ -787,6 +891,26 @@ def inference_worker():
                 max_amp = 1000
                 audio_duration = 0.0
 
+            # If audio duration is under 0.35s (transient click, accidental key tap), skip to prevent hallucinated ghost words
+            if audio_duration < 0.35:
+                print(f"[WhisperWorker] Recording too short ({audio_duration:.2f}s). Skipping inference to prevent hallucination.", flush=True)
+                res_q.put((True, {
+                    "raw_text": "",
+                    "final_text": "",
+                    "stt_ms": 0.0,
+                    "llm_ms": 0.0,
+                    "total_ms": 0.0,
+                    "word_count": 0,
+                    "char_count": 0,
+                    "cost_usd": 0.0,
+                    "cost_label": "⚡ Short",
+                    "model": "none",
+                    "polish_model": "none",
+                    "warning": "Recording too short (<0.35s)",
+                    "rate_limits": get_groq_rate_limits()
+                }))
+                continue
+
             # If audio is digital silence or below audible speech threshold, skip Whisper completely
             if max_amp < 60 or rms < 10.0:
                 print(f"[WhisperWorker] Silent audio received (max_amp={max_amp}, rms={rms:.1f}). Skipping inference to prevent hallucination.", flush=True)
@@ -802,7 +926,8 @@ def inference_worker():
                     "cost_label": "⚡ Silence",
                     "model": "Whisper Large v3 (Groq LPU)" if req_config.get("stt_engine") == "groq" else "Whisper Large v3 Turbo (MLX)",
                     "polish_model": "none",
-                    "warning": "No speech detected (silent recording)"
+                    "warning": "No speech detected (silent recording)",
+                    "rate_limits": get_groq_rate_limits()
                 }))
                 continue
 
@@ -835,7 +960,7 @@ def inference_worker():
 
             cues = []
             # Tech & developer vocabulary baseline so Whisper's acoustic decoder recognizes modern tooling:
-            tech_baseline = "Vercel, LiveKit, Conduit, Next.js, Docker, GitHub Actions, CI/CD, Supabase, Tailwind, React, TypeScript, PR, API"
+            tech_baseline = "Groq, Groq API, Groq limit, Vercel, LiveKit, Conduit, Next.js, Docker, GitHub Actions, CI/CD, Supabase, Tailwind, React, TypeScript, PR, API"
             cues.append(tech_baseline)
             if custom_vocab:
                 cues.append(custom_vocab)
@@ -911,7 +1036,8 @@ def inference_worker():
                     "cost_label": "⚡ Silence",
                     "model": stt_model_name,
                     "polish_model": "none",
-                    "warning": "No speech detected"
+                    "warning": "No speech detected",
+                    "rate_limits": get_groq_rate_limits(),
                 }))
                 continue
 
@@ -971,6 +1097,7 @@ def inference_worker():
                 "polish_status": polish_status,
                 "cost_label": cost_label,
                 "model": stt_model_name,
+                "rate_limits": get_groq_rate_limits(),
             }))
         except Exception as e:
             res_q.put((False, {"error": str(e)}))
@@ -2515,6 +2642,8 @@ class DaemonHandler(BaseHTTPRequestHandler):
             api_key = query.get("key", [""])[0] or load_config().get("openrouter_key", "")
             res = check_openrouter_balance(api_key)
             self._send_json(200, res)
+        elif path in ("/api/groq_limits", "/api/rate_limits"):
+            self._send_json(200, get_groq_rate_limits())
         else:
             self._send_json(404, {"error": "not found"})
 
