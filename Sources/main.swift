@@ -4672,10 +4672,23 @@ struct DictateTabPane: View {
                     HStack(spacing: 3) {
                         Image(systemName: "mic.fill")
                             .font(.system(size: 8))
-                            .foregroundColor(state.hudAccentColor)
+                            .foregroundColor(state.isRecording ? (state.audioLevel > 0.6 ? .orange : .green) : state.hudAccentColor)
                         Text(state.selectedMicName.isEmpty || state.selectedMicName == "System Default" ? state.currentMicName : state.selectedMicName)
                             .font(.system(size: 8.5, weight: .medium))
                             .lineLimit(1)
+
+                        if state.isRecording {
+                            // Live Input Level VU Bar
+                            GeometryReader { g in
+                                ZStack(alignment: .leading) {
+                                    Capsule().fill(Color.primary.opacity(0.12))
+                                    Capsule().fill(state.audioLevel > 0.65 ? Color.orange : Color.green)
+                                        .frame(width: max(2, g.size.width * CGFloat(state.audioLevel)))
+                                }
+                            }
+                            .frame(width: 24, height: 3.5)
+                        }
+
                         Image(systemName: "chevron.up.chevron.down")
                             .font(.system(size: 6.5))
                             .foregroundColor(.secondary.opacity(0.7))

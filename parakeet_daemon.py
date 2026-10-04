@@ -401,7 +401,8 @@ def wispr_smart_format(text: str) -> str:
     t = re.sub(r"(?i)\b(?:set|see)\s+a\s+limit\s+for\s+broke\b", "see the Groq limit", t)
     t = re.sub(r"(?i)\bsee\s+the\s+broke\s+limit\b", "see the Groq limit", t)
     t = re.sub(r"(?i)\blimit\s+for\s+groq\b", "Groq limit", t)
-    t = re.sub(r"(?i)\bbosia\b", "Vozia", t)
+    t = re.sub(r"(?i)\b(?:auto[- ]?deflect(?:ed)?)\b", "auto-detect", t)
+    t = re.sub(r"(?i)\bform\s+in\s+UI\b", "waveform in the UI", t)
     t = re.sub(r"\b(bigger|smaller|large|larger|AI|ML|speech|language|Whisper|Qwen|LLM|Muse|foundational|new|this|that|the)\s+module(s)?\b", r"\1 model\2", t, flags=re.IGNORECASE)
     t = re.sub(r"\bmodule(s)?\s+(training|inference|weights|architecture|accuracy|parameters)\b", r"model\1 \2", t, flags=re.IGNORECASE)
 
@@ -698,6 +699,8 @@ def polish_text_unified(raw_text: str, cfg: dict) -> tuple[str, float, str]:
         "   - 'it for sale' or 'it by itself' (near deployment, hosting, cloud, server, project, Next.js) -> 'Vercel'\n"
         "   - 'light kit' or 'like it' (near audio, stream, WebRTC, call, Conduit) -> 'LiveKit'\n"
         "   - 'country' or 'country documentation' (near WebRTC, streaming, LiveKit) -> 'Conduit' / 'Conduit documentation'\n"
+        "   - 'auto-deflect' or 'auto deflect' (near audio, mic, volume, speech, UI) -> 'auto-detect'\n"
+        "   - 'form in UI' or 'way form' (near sound, voice, audio, mic) -> 'waveform in the UI' / 'waveform'\n"
         "   - 'remove your necessary' -> 'remove unnecessary'\n"
         "   - In AI/tech contexts, restore 'model/models' when STT mishears it as 'module/modules' (e.g. 'Whisper module' -> 'Whisper model')\n"
         "   - Preserve Nigerian slang & colloquialisms (e.g. 'how far, abeg', 'naira') and modern developer tools (Vozia, Groq, Vercel, LiveKit, Conduit, Docker, GitHub Actions, CI/CD, Next.js, Supabase, Tailwind, TypeScript).\n"
@@ -1031,12 +1034,13 @@ def inference_worker():
                 continue
 
             # 2. Digital AGC / Audio Normalization:
-            # If the user speaks at low volume or far from the mic (e.g. -44 dBFS, peak amp < 18000),
-            # boost audio cleanly so consonant formants (V, F, S, K, T in tech words like Vercel) are crisp.
+            # If the user speaks at low volume or far from the mic (e.g. peak amp < 12000),
+            # apply gentle soft boost capped at 3.0x (+9.5 dB) so background reverb isn't distorted.
             effective_audio_path = audio_path
-            if 5 <= max_amp < 18000 and len(samples) > 0:
+            if 50 <= max_amp < 12000 and len(samples) > 0:
                 try:
-                    gain = min(25000.0 / float(max_amp), 12.0) # up to +21.5 dB clean boost
+                    target_peak = min(max_amp * 2.5, 14000.0)
+                    gain = max(1.0, min(target_peak / float(max_amp), 3.0)) # max +9.5 dB gentle boost
                     boosted = np.clip(samples.astype(np.float32) * gain, -32767, 32767).astype(np.int16)
                     norm_path = "/tmp/parakeet_normalized.wav"
                     with wave.open(norm_path, "wb") as nw:
@@ -1045,11 +1049,12 @@ def inference_worker():
                         nw.setframerate(fr if fr > 0 else 16000)
                         nw.writeframes(boosted.tobytes())
                     effective_audio_path = norm_path
-                    print(f"[WhisperWorker] Boosted quiet audio by {20*np.log10(gain):.1f}dB (peak {max_amp} -> {int(max_amp*gain)})", flush=True)
+                    print(f"[WhisperWorker] Gently normalized quiet audio by {20*np.log10(gain):.1f}dB (peak {max_amp} -> {int(max_amp*gain)})", flush=True)
                 except Exception as ex:
                     print(f"[WhisperWorker] Audio normalization warning: {ex}", flush=True)
 
-            # Screen Context Awareness: extract on-screen cues
+            # Screen Context & Vocabulary Awareness:
+            # Provide natural conversation priming and user custom vocabulary to Whisper.
             context_app = req_config.get("context_app", "").strip()
             context_title = req_config.get("context_title", "").strip()
             context_text = req_config.get("context_selected_text", "").strip()
@@ -1058,9 +1063,8 @@ def inference_worker():
                 custom_vocab = (load_config().get("custom_vocab") or "").strip()
 
             cues = []
-            # Tech & developer vocabulary baseline so Whisper's acoustic decoder recognizes modern tooling:
-            tech_baseline = "Vozia, Groq, Groq API, Groq limit, Vercel, LiveKit, Conduit, Next.js, Docker, GitHub Actions, CI/CD, Supabase, Tailwind, React, TypeScript, PR, API"
-            cues.append(tech_baseline)
+            # Natural speech dictation baseline: complete punctuation, natural tone, UI terminology
+            cues.append("Natural clear dictation, complete sentences, punctuation, UI, waveform, auto-detect.")
             if custom_vocab:
                 sanitized_cues = sanitize_custom_vocab(custom_vocab)
                 if sanitized_cues:
@@ -1072,7 +1076,7 @@ def inference_worker():
                 cues.append(clean_title)
             if context_text:
                 cues.append(context_text[:120])
-            prompt_str = ", ".join([c.strip() for c in cues if c.strip()])
+            prompt_str = " ".join([c.strip() for c in cues if c.strip()])
 
             groq_key = (req_config.get("groq_key") or "").strip()
             if not groq_key:
