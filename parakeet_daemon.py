@@ -309,7 +309,7 @@ def sanitize_transcription(raw_text: str, duration_sec: float = 0.0, rms: float 
         text = re.sub(r"(?i)(.)\1{2,}", r"\1", text)
 
     # Low-energy single-word duplicate stutter (e.g. 'word, word' on click or background noise)
-    if (duration_sec < 1.2 or rms < 85.0) and re.match(r"^(?i)([\w\'-]+)[,\s]+\1[.,!?]*$", text):
+    if (duration_sec < 1.2 or rms < 85.0) and re.match(r"^([\w\'-]+)[,\s]+\1[.,!?]*$", text, flags=re.IGNORECASE):
         print(f"[Sanitize] Suppressed low-energy duplicate stutter hallucination '{text}'", flush=True)
         return ""
 
@@ -947,19 +947,23 @@ def transcribe_with_groq(audio_path: str, groq_key: str, prompt: str = "", langu
 
 def inference_worker():
     global LOAD_TIME_S
-    print(f"[WhisperWorker] Pre-warming {MODEL_ID} on Apple Silicon Metal GPU...", flush=True)
-    t0 = time.perf_counter()
-    warmup_wav = np.zeros(16000, dtype="float32")
-    _ = mlx_whisper.transcribe(
-        warmup_wav,
-        path_or_hf_repo=MODEL_ID,
-        language="en",
-        condition_on_previous_text=False,
-        temperature=0.0,
-    )
-    LOAD_TIME_S = round(time.perf_counter() - t0, 2)
-    print(f"[WhisperWorker] Whisper Large v3 Turbo ready in {LOAD_TIME_S}s!", flush=True)
+    # Signal daemon is online immediately so Groq requests work without delay
     READY_EVENT.set()
+    print(f"[WhisperWorker] Pre-warming {MODEL_ID} on Apple Silicon Metal GPU in background...", flush=True)
+    try:
+        t0 = time.perf_counter()
+        warmup_wav = np.zeros(16000, dtype="float32")
+        _ = mlx_whisper.transcribe(
+            warmup_wav,
+            path_or_hf_repo=MODEL_ID,
+            language="en",
+            condition_on_previous_text=False,
+            temperature=0.0,
+        )
+        LOAD_TIME_S = round(time.perf_counter() - t0, 2)
+        print(f"[WhisperWorker] Whisper Large v3 Turbo ready in {LOAD_TIME_S}s!", flush=True)
+    except Exception as ew:
+        print(f"[WhisperWorker] MLX warm-up notice: {ew}", flush=True)
 
     while True:
         task = TASK_QUEUE.get()
@@ -1006,8 +1010,8 @@ def inference_worker():
                 }))
                 continue
 
-            # If audio is digital silence or below audible speech threshold, skip Whisper completely
-            if max_amp < 60 or rms < 10.0:
+            # If audio is true digital silence (empty / disconnected hardware buffer), skip Whisper completely
+            if max_amp < 5 or rms < 1.0:
                 print(f"[WhisperWorker] Silent audio received (max_amp={max_amp}, rms={rms:.1f}). Skipping inference to prevent hallucination.", flush=True)
                 res_q.put((True, {
                     "raw_text": "",
@@ -1030,7 +1034,7 @@ def inference_worker():
             # If the user speaks at low volume or far from the mic (e.g. -44 dBFS, peak amp < 18000),
             # boost audio cleanly so consonant formants (V, F, S, K, T in tech words like Vercel) are crisp.
             effective_audio_path = audio_path
-            if 60 <= max_amp < 18000 and len(samples) > 0:
+            if 5 <= max_amp < 18000 and len(samples) > 0:
                 try:
                     gain = min(25000.0 / float(max_amp), 12.0) # up to +21.5 dB clean boost
                     boosted = np.clip(samples.astype(np.float32) * gain, -32767, 32767).astype(np.int16)
@@ -1197,6 +1201,8 @@ def inference_worker():
                 "rate_limits": get_groq_rate_limits(),
             }))
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             res_q.put((False, {"error": str(e)}))
         finally:
             TASK_QUEUE.task_done()
@@ -2807,7 +2813,6 @@ class DaemonHandler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    READY_EVENT.wait()
     server = ThreadingHTTPServer(("127.0.0.1", PORT), DaemonHandler)
     print(f"[WhisperDaemon] Serving Golden Gate Glass on http://127.0.0.1:{PORT}", flush=True)
     try:
