@@ -59,6 +59,23 @@ final class AppState: ObservableObject {
     @Published var groqResetRequests: String = ""
     @Published var groqUsagePercent: Int = 100
 
+    var formattedGroqResetNotice: String {
+        if groqTokensRemaining >= groqTokensLimit {
+            return "⚡ 100% full (rolling 1-min window)"
+        }
+        if groqResetTokens.isEmpty {
+            return "⚡ Rolling 1-min window"
+        }
+        var clean = groqResetTokens.trimmingCharacters(in: .whitespacesAndNewlines)
+        if clean.hasSuffix("s") && !clean.hasSuffix("ms") {
+            let numPart = clean.dropLast()
+            if let d = Double(numPart) {
+                clean = "\(Int(round(d)))s"
+            }
+        }
+        return "⚡ Refills in \(clean) (rolling window)"
+    }
+
     // Menu Bar Control Center Active Tab
     @Published var activeTab: ControlCenterTab = .dictate
 
@@ -4693,6 +4710,7 @@ struct DictateTabPane: View {
                     .padding(.vertical, 3)
                     .background(Color.primary.opacity(0.025))
                     .cornerRadius(4)
+                    .help(state.formattedGroqResetNotice)
                 }
 
                 // Custom Words Quick Bar
@@ -5903,11 +5921,10 @@ struct SettingsTabPane: View {
                 .frame(height: 4)
 
                 HStack {
-                    if !state.groqResetTokens.isEmpty {
-                        Text("Tokens reset: \(state.groqResetTokens)")
-                            .font(.system(size: 7))
-                            .foregroundColor(.secondary.opacity(0.7))
-                    }
+                    Text(state.formattedGroqResetNotice)
+                        .font(.system(size: 7.5, weight: .medium))
+                        .foregroundColor(.secondary)
+                        .help("Groq rate limits work on a continuous 1-minute rolling window. Used tokens refill back to full within seconds.")
                     Spacer()
                     Link("Groq Console ↗", destination: URL(string: "https://console.groq.com/settings/limits")!)
                         .font(.system(size: 7.5, weight: .medium))
