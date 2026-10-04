@@ -400,8 +400,8 @@ def wispr_smart_format(text: str) -> str:
         return ""
     t = text.strip()
 
-    # 1. Strip trailing spoken meta-talk / placeholders
-    t = re.sub(r"\s*(in order to\s+)?(blah(\s+blah)*|etc|whatever|and so on)\.?\s*$", "", t, flags=re.IGNORECASE)
+    # 1. Strip trailing spoken meta-talk / placeholders (only if explicit filler like 'blah blah blah')
+    t = re.sub(r"\s*(in order to\s+)?(blah(\s+blah)+)\.?\s*$", "", t, flags=re.IGNORECASE)
 
     # 2. Remove filler words (um, uh, erm)
     t = re.sub(r"\b(um+|uh+|erm+)\b[,\s]*", "", t, flags=re.IGNORECASE)
@@ -710,10 +710,13 @@ def polish_text_unified(raw_text: str, cfg: dict) -> tuple[str, float, str]:
     is_single_word = (len(words) == 1)
 
     sys_msg = (
-        "You are an ultra-fast, professional voice dictation post-processor (like Wispr Flow / Apple Intelligence). "
-        "Transform raw speech-to-text into publication-quality written text:\n"
-        "1. Punctuation: Add natural commas, periods, question marks, and capitalization. Fix run-on sentences into crisp prose.\n"
-        "2. Structure: Put numbered lists (1., 2., 3.) and bullet points on separate new lines. Keep short introductory labels like 'Test 1:' or 'Part 1:' inline with their sentence rather than breaking them into orphaned single-word lines.\n"
+        "You are an elite voice dictation grammar and post-processing engine (like Wispr Flow / Apple Intelligence). "
+        "Transform raw speech-to-text into publication-quality, grammatically correct written English ready to send directly to clients, colleagues, and friends on WhatsApp, Slack, email, and social media:\n"
+        "1. Grammar, Syntax & Concord (CRITICAL):\n"
+        "   - Actively repair all spoken grammatical mistakes: fix subject-verb agreement (e.g. 'the markers on the map is' -> 'the markers on the map are', 'the client didn't paid' -> 'the client hasn't paid', 'we needs to' -> 'we need to', 'there is too many errors' -> 'there are too many errors').\n"
+        "   - Fix awkward spoken phrasing and stream-of-consciousness run-ons into crisp, readable sentences with natural commas, periods, apostrophes, and question marks.\n"
+        "2. Structure & Formatting:\n"
+        "   - Put numbered lists (1., 2., 3.) and bullet points on separate new lines. Keep short introductory labels like 'Test 1:' or 'Part 1:' inline with their sentence rather than breaking them into orphaned single-word lines.\n"
         "3. Spoken correction: Resolve mid-sentence self-corrections (e.g., 'meet at 10 actually make that 3' -> 'meet at 3 PM').\n"
         "4. Verbal fillers: Seamlessly remove verbal fillers ('um', 'uh', 'you know', 'in order to blah').\n"
         "5. Phonetic & Tech Healing: Acoustic STT often mishears accented words or technical terms. Cross-reference with context hints to repair acoustic slips:\n"
@@ -727,17 +730,16 @@ def polish_text_unified(raw_text: str, cfg: dict) -> tuple[str, float, str]:
         "   - In AI/tech contexts, restore 'model/models' when STT mishears it as 'module/modules' (e.g. 'Whisper module' -> 'Whisper model')\n"
         "   - Preserve Nigerian slang & colloquialisms (e.g. 'how far, abeg', 'naira') and modern developer tools (Vozia, Groq, Vercel, LiveKit, Conduit, Docker, GitHub Actions, CI/CD, Next.js, Supabase, Tailwind, TypeScript).\n"
         "   - Single-word / short phrases: If a single word or short phrase is in ALL CAPS or phonetically misspelled (e.g. 'COZIN' -> 'Cousins', 'OZIN' -> 'Cousins', 'bosia' -> 'Vozia', 'DEPLOY' -> 'Deploy'), restore correct English dictionary spelling and casing. Output ONLY that single word with no period and no quotes.\n"
-        "6. CRITICAL PERSPECTIVE & PRONOUN INTEGRITY:\n"
+        "6. Perspective & Pronoun Integrity:\n"
         "   - NEVER alter, invert, or flip grammatical perspective, point-of-view, or pronouns (I, you, he, she, we, they).\n"
         "   - If the speaker says 'You should go test it out', output 'You should go test it out.' NEVER rewrite 'you' into 'I' or 'we'.\n"
         "   - If the speaker asks 'Can you...', 'Did you...', or gives instructions to someone else, preserve 'you' verbatim.\n"
         "   - The speaker may be addressing someone else, dictating an email, or messaging a teammate. Maintain the exact subject, speaker, and audience.\n"
-        "   - Do NOT convert instructions directed at another person into personal reminders or first-person statements.\n"
-        "7. ZERO-PARAPHRASE & VOCABULARY INTEGRITY (CRITICAL):\n"
-        "   - Never summarize, rephrase, condense, or omit sentences. Keep 100% of the speaker's exact words, tone, and sentence structure.\n"
-        "   - Never delete conversational openings like 'Okay, so...' or 'So, next...'.\n"
-        "   - Never replace informal words with artificial formal prose (e.g., do NOT change 'and whatever' into 'and other elements'; do NOT change 'the spots' into 'the elements').\n"
-        "   - Never output blocks of uppercase hallucinated words. If you encounter stray out-of-context uppercase words from Whisper STT errors (like 'PLUGMAX, ZOO...'), drop or phonetically heal them.\n"
+        "7. Voice, Tone & No Paraphrasing:\n"
+        "   - Maintain the speaker's natural voice, cadence, and informal conversational openings (e.g., 'Okay, so...', 'Hey, so...', 'Alright,').\n"
+        "   - Never omit sentences or summarize ideas into a short synopsis.\n"
+        "   - Do NOT turn casual messages into stuffy legalese (keep natural phrasing like 'and whatever', 'a bit more beautiful', 'pretty good').\n"
+        "   - Purge any stray out-of-context uppercase words from Whisper STT errors (like 'PLUGMAX, ZOO...').\n"
         "8. Output: Return ONLY the polished text with no conversational preamble, no quotes, and no commentary."
     )
     if custom_vocab.strip():
