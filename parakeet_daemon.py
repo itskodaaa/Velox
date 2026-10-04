@@ -369,6 +369,28 @@ def sanitize_transcription(raw_text: str, duration_sec: float = 0.0, rms: float 
             else:
                 text = " ".join(tokens[:3])
 
+    # 5. Hallucinated all-caps token bursts / random dictionary salads (e.g. 'PLUGMAX, ZOO, JAPANESE, ESO, MO, NETWORK,')
+    # Whisper has a known glitch where trailing noise / quiet tail triggers random uppercase token emissions.
+    # Detect trailing sequence of 3 or more uppercase tokens:
+    tokens = text.split()
+    caps_start_idx = -1
+    consecutive_caps = 0
+    for i, tok in enumerate(tokens):
+        clean_w = re.sub(r"[^\w]", "", tok)
+        # Check if token is all uppercase, >= 2 chars, and not a standard acronym like AI, PR, UI, API, ID, OK, TV, US, UK
+        is_shout = clean_w.isupper() and len(clean_w) >= 2 and clean_w not in {"AI", "PR", "UI", "API", "ID", "OK", "TV", "US", "UK", "CI", "CD", "LLM", "CPU", "GPU", "LPU", "RAM", "URL", "HTML", "CSS", "JS", "TS"}
+        if is_shout:
+            consecutive_caps += 1
+            if consecutive_caps >= 3 and caps_start_idx == -1:
+                caps_start_idx = i - 2
+        else:
+            consecutive_caps = 0
+
+    if caps_start_idx != -1 and caps_start_idx > 0:
+        print(f"[Sanitize] Stripped trailing all-caps hallucination salad starting at token {caps_start_idx}: '{' '.join(tokens[caps_start_idx:])}'", flush=True)
+        text = " ".join(tokens[:caps_start_idx])
+        text = text.rstrip(" ,;:-")
+
     return text.strip()
 
 
@@ -711,7 +733,11 @@ def polish_text_unified(raw_text: str, cfg: dict) -> tuple[str, float, str]:
         "   - If the speaker asks 'Can you...', 'Did you...', or gives instructions to someone else, preserve 'you' verbatim.\n"
         "   - The speaker may be addressing someone else, dictating an email, or messaging a teammate. Maintain the exact subject, speaker, and audience.\n"
         "   - Do NOT convert instructions directed at another person into personal reminders or first-person statements.\n"
-        "7. Tone & Completeness: Retain 100% of the speaker's original vocabulary, colloquialisms, and intent. Never summarize, omit facts, or invent words.\n"
+        "7. ZERO-PARAPHRASE & VOCABULARY INTEGRITY (CRITICAL):\n"
+        "   - Never summarize, rephrase, condense, or omit sentences. Keep 100% of the speaker's exact words, tone, and sentence structure.\n"
+        "   - Never delete conversational openings like 'Okay, so...' or 'So, next...'.\n"
+        "   - Never replace informal words with artificial formal prose (e.g., do NOT change 'and whatever' into 'and other elements'; do NOT change 'the spots' into 'the elements').\n"
+        "   - Never output blocks of uppercase hallucinated words. If you encounter stray out-of-context uppercase words from Whisper STT errors (like 'PLUGMAX, ZOO...'), drop or phonetically heal them.\n"
         "8. Output: Return ONLY the polished text with no conversational preamble, no quotes, and no commentary."
     )
     if custom_vocab.strip():
