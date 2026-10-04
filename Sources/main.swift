@@ -59,6 +59,11 @@ final class AppState: ObservableObject {
     @Published var groqResetRequests: String = ""
     @Published var groqUsagePercent: Int = 100
 
+    private var groqRefillTimer: Timer?
+    private var groqSnapshotTime: Date = Date()
+    private var groqSnapshotTokens: Int = 8000
+    private var groqResetDurationSecs: Double = 0.0
+
     var formattedGroqResetNotice: String {
         if groqTokensRemaining >= groqTokensLimit {
             return "⚡ 100% full (rolling 1-min window)"
@@ -164,7 +169,7 @@ final class AppState: ObservableObject {
     @AppStorage("lmstudio_url") var lmStudioUrl: String = "http://127.0.0.1:1234"
     @AppStorage("lmstudio_model") var lmStudioModel: String = "local-model"
     @AppStorage("use_llm_polish") var useLlmPolish: Bool = true
-    @AppStorage("custom_vocab") var customVocab: String = "Vozia, how far, abeg, naira, GitHub, PR, Velox, Vercel, LiveKit, Conduit, Docker, Next.js, CI/CD, Supabase, Tailwind, TypeScript, React, model, models"
+    @AppStorage("custom_vocab") var customVocab: String = "Recurring Document, Recalling -> Recurring, Vozia, how far, abeg, naira, GitHub, PR, Velox, Vercel, LiveKit, Conduit, Docker, Next.js, CI/CD, Supabase, Tailwind, TypeScript, React, model, models"
     @AppStorage("auto_paste") var autoPaste: Bool = true
     @Published var openRouterBalanceText: String = "OpenRouter"
 
@@ -405,21 +410,49 @@ final class AppState: ObservableObject {
         }.resume()
     }
 
-    func updateRateLimits(json: [String: Any]) {
-        if let rem = json["remaining_tokens"] as? Int {
-            self.groqTokensRemaining = rem
+    private func parseDurationStringToSeconds(_ s: String) -> Double {
+        let clean = s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if clean.isEmpty || clean == "0s" { return 0.0 }
+        var total: Double = 0.0
+        // Check for ms
+        if let r = clean.range(of: #"([\d\.]+)\s*ms"#, options: .regularExpression) {
+            let matched = String(clean[r]).replacingOccurrences(of: "ms", with: "").trimmingCharacters(in: .whitespaces)
+            if let val = Double(matched) { total += val / 1000.0 }
         }
+        // Check for m
+        if let r = clean.range(of: #"([\d\.]+)\s*m(in)?(?![s])"#, options: .regularExpression) {
+            let matched = String(clean[r]).replacingOccurrences(of: "min", with: "").replacingOccurrences(of: "m", with: "").trimmingCharacters(in: .whitespaces)
+            if let val = Double(matched) { total += val * 60.0 }
+        }
+        // Check for s
+        if let r = clean.range(of: #"([\d\.]+)\s*s(ec)?"#, options: .regularExpression) {
+            let matched = String(clean[r]).replacingOccurrences(of: "sec", with: "").replacingOccurrences(of: "s", with: "").trimmingCharacters(in: .whitespaces)
+            if let val = Double(matched) { total += val }
+        }
+        if total == 0.0 {
+            if let d = Double(clean) { total = d }
+        }
+        return total
+    }
+
+    func updateRateLimits(json: [String: Any]) {
         if let lim = json["limit_tokens"] as? Int {
             self.groqTokensLimit = lim
         }
-        if let rRem = json["remaining_requests"] as? Int {
-            self.groqRequestsRemaining = rRem
+        if let rem = json["remaining_tokens"] as? Int {
+            self.groqTokensRemaining = rem
+            self.groqSnapshotTokens = rem
         }
         if let rLim = json["limit_requests"] as? Int {
             self.groqRequestsLimit = rLim
         }
+        if let rRem = json["remaining_requests"] as? Int {
+            self.groqRequestsRemaining = rRem
+        }
         if let rTok = json["reset_tokens"] as? String {
             self.groqResetTokens = rTok
+            self.groqResetDurationSecs = parseDurationStringToSeconds(rTok)
+            self.groqSnapshotTime = Date()
         }
         if let rReq = json["reset_requests"] as? String {
             self.groqResetRequests = rReq
@@ -427,13 +460,44 @@ final class AppState: ObservableObject {
         if self.groqTokensLimit > 0 {
             self.groqUsagePercent = max(0, min(100, Int((Double(self.groqTokensRemaining) / Double(self.groqTokensLimit)) * 100.0)))
         }
+
+        // Start or restart real-time 1-second countdown and token replenishment timer
+        groqRefillTimer?.invalidate()
+        if self.groqTokensRemaining < self.groqTokensLimit && self.groqResetDurationSecs > 0 {
+            groqRefillTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] t in
+                guard let self = self else {
+                    t.invalidate()
+                    return
+                }
+                let elapsed = Date().timeIntervalSince(self.groqSnapshotTime)
+                if elapsed >= self.groqResetDurationSecs {
+                    // Reset period elapsed: full refill
+                    self.groqTokensRemaining = self.groqTokensLimit
+                    self.groqResetTokens = "0s"
+                    self.groqUsagePercent = 100
+                    t.invalidate()
+                    self.groqRefillTimer = nil
+                } else {
+                    let secsLeft = max(0, Int(ceil(self.groqResetDurationSecs - elapsed)))
+                    self.groqResetTokens = "\(secsLeft)s"
+                    // Replenish tokens proportionally as time elapses
+                    let frac = min(1.0, elapsed / self.groqResetDurationSecs)
+                    let totalNeeded = self.groqTokensLimit - self.groqSnapshotTokens
+                    let replenished = self.groqSnapshotTokens + Int(Double(totalNeeded) * frac)
+                    self.groqTokensRemaining = min(self.groqTokensLimit, replenished)
+                    if self.groqTokensLimit > 0 {
+                        self.groqUsagePercent = max(0, min(100, Int((Double(self.groqTokensRemaining) / Double(self.groqTokensLimit)) * 100.0)))
+                    }
+                }
+            }
+        }
     }
 
-    func refreshGroqRateLimits() {
-        let urlStr = "http://127.0.0.1:18765/api/groq_limits"
+    func refreshGroqRateLimits(force: Bool = false) {
+        let urlStr = force ? "http://127.0.0.1:18765/api/groq_limits?force=1" : "http://127.0.0.1:18765/api/groq_limits"
         guard let url = URL(string: urlStr) else { return }
         var req = URLRequest(url: url)
-        req.timeoutInterval = 3.0
+        req.timeoutInterval = 3.5
         URLSession.shared.dataTask(with: req) { data, _, _ in
             guard let data = data,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
@@ -5534,7 +5598,7 @@ struct CustomVocabSettingsCard: View {
 
             // Input Row
             HStack(spacing: 5) {
-                TextField("Add word (e.g. Vozia, Vercel)...", text: $newWordText)
+                TextField("Add word or mapping (e.g. Vozia or Recalling -> Recurring)...", text: $newWordText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 8.5))
                     .padding(.horizontal, 7)
@@ -5571,7 +5635,7 @@ struct CustomVocabSettingsCard: View {
             // Word Chips Flow
             let list = state.customVocabList
             if list.isEmpty {
-                Text("No custom words yet. Add names, slang, or technical terms.")
+                Text("No custom words yet. Add names, slang, or 'Sounds Like -> Actual Word' rules.")
                     .font(.system(size: 7.5))
                     .foregroundColor(.secondary.opacity(0.6))
                     .padding(.vertical, 2)
@@ -5579,9 +5643,29 @@ struct CustomVocabSettingsCard: View {
                 FlowLayout(spacing: 4) {
                     ForEach(list, id: \.self) { word in
                         HStack(spacing: 3) {
-                            Text(word)
-                                .font(.system(size: 8, weight: .medium))
+                            if word.contains("->") || word.contains("→") {
+                                let sep = word.contains("->") ? "->" : "→"
+                                let parts = word.components(separatedBy: sep)
+                                let fromPart = parts.first?.trimmingCharacters(in: .whitespaces) ?? ""
+                                let toPart = parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespaces) : ""
+                                HStack(spacing: 2) {
+                                    Text(fromPart)
+                                        .font(.system(size: 8, weight: .regular))
+                                        .foregroundColor(.secondary)
+                                    Image(systemName: "arrow.right")
+                                        .font(.system(size: 6, weight: .bold))
+                                        .foregroundColor(state.hudAccentColor)
+                                    Text(toPart)
+                                        .font(.system(size: 8, weight: .semibold))
+                                        .foregroundColor(.primary)
+                                }
                                 .lineLimit(1)
+                            } else {
+                                Text(word)
+                                    .font(.system(size: 8, weight: .medium))
+                                    .lineLimit(1)
+                            }
+
                             Button(action: {
                                 state.removeCustomWord(word)
                             }) {
@@ -5604,7 +5688,7 @@ struct CustomVocabSettingsCard: View {
                 }
             }
 
-            Text("Custom words prime Whisper STT and ensure correct spelling and casing.")
+            Text("Tip: Add single words (e.g. Vozia) or acoustic repairs (e.g. Recalling -> Recurring).")
                 .font(.system(size: 7))
                 .foregroundColor(.secondary.opacity(0.6))
         }
@@ -5881,13 +5965,13 @@ struct SettingsTabPane: View {
                         .foregroundColor(.secondary.opacity(0.8))
                         .tracking(0.8)
                     Spacer()
-                    Button(action: { state.refreshGroqRateLimits() }) {
+                    Button(action: { state.refreshGroqRateLimits(force: true) }) {
                         Image(systemName: "arrow.triangle.2.circlepath")
                             .font(.system(size: 7))
                             .foregroundColor(.secondary)
                     }
                     .buttonStyle(.plain)
-                    .help("Refresh Groq Quota")
+                    .help("Refresh Groq Quota (live probe)")
                 }
 
                 HStack(spacing: 8) {

@@ -250,13 +250,18 @@ def sanitize_custom_vocab(custom_vocab_raw: str) -> Optional[str]:
     raw_parts = [p.strip() for p in custom_vocab_raw.split(",") if p.strip()]
     cleaned_terms = []
     for part in raw_parts:
+        # If mapping rule "Source -> Target", extract the target word for Whisper priming
+        term = part
+        if "->" in term or "→" in term:
+            sep = "->" if "->" in term else "→"
+            term = term.split(sep, 1)[1].strip()
         # Reject standalone numbers, prices, or digit combos (e.g. '1k', '2k', '4k', '100', '1st', '50%')
-        if re.match(r"^\d+[a-zA-Z%]*$", part):
+        if re.match(r"^\d+[a-zA-Z%]*$", term):
             continue
         # Reject single character tokens
-        if len(part) <= 1:
+        if len(term) <= 1:
             continue
-        cleaned_terms.append(part)
+        cleaned_terms.append(term)
 
     if not cleaned_terms:
         return None
@@ -434,13 +439,23 @@ def wispr_smart_format(text: str) -> str:
     for pat, repl in tech_map.items():
         t = re.sub(pat, repl, t, flags=re.IGNORECASE)
 
-    # Dynamic custom vocabulary casing enforcement
+    # Dynamic custom vocabulary casing and acoustic sound-alike mapping rules (e.g. "Recalling -> Recurring")
     try:
         cfg_vocab = load_config().get("custom_vocab", "")
         if cfg_vocab:
             for term in cfg_vocab.split(","):
                 clean_term = term.strip()
-                if clean_term and len(clean_term) > 1 and not clean_term.isnumeric():
+                if not clean_term or len(clean_term) <= 1 or clean_term.isnumeric():
+                    continue
+                # Check for acoustic sound-alike mapping: "Source -> Target" or "Source -> Target"
+                if "->" in clean_term or "→" in clean_term:
+                    sep = "->" if "->" in clean_term else "→"
+                    parts = clean_term.split(sep, 1)
+                    src = parts[0].strip()
+                    dst = parts[1].strip()
+                    if src and dst:
+                        t = re.sub(rf"(?i)\b{re.escape(src)}\b", dst, t)
+                else:
                     t = re.sub(rf"(?i)\b{re.escape(clean_term)}\b", clean_term, t)
     except Exception:
         pass
@@ -596,10 +611,33 @@ def update_groq_limits_from_headers(headers: dict):
         GLOBAL_GROQ_LIMITS["last_updated"] = time.time()
 
 
-def get_groq_rate_limits() -> dict:
+def parse_duration_seconds(d_str: str) -> float:
+    if not d_str or not isinstance(d_str, str):
+        return 0.0
+    s = d_str.strip().lower()
+    total = 0.0
+    ms_match = re.search(r"([\d\.]+)\s*ms", s)
+    if ms_match:
+        total += float(ms_match.group(1)) / 1000.0
+        s = re.sub(r"[\d\.]+\s*ms", "", s)
+    m_match = re.search(r"([\d\.]+)\s*m(?:in)?", s)
+    if m_match:
+        total += float(m_match.group(1)) * 60.0
+        s = re.sub(r"[\d\.]+\s*m(?:in)?", "", s)
+    s_match = re.search(r"([\d\.]+)\s*s(?:ec)?", s)
+    if s_match:
+        total += float(s_match.group(1))
+    return total
+
+
+def get_groq_rate_limits(force: bool = False) -> dict:
     global GLOBAL_GROQ_LIMITS
-    # If not updated yet, probe once to fetch accurate headers
-    if GLOBAL_GROQ_LIMITS["last_updated"] == 0.0:
+    now = time.time()
+    last_up = GLOBAL_GROQ_LIMITS.get("last_updated", 0.0)
+    elapsed = now - last_up if last_up > 0 else 999.0
+
+    # If force probe requested or never updated, probe Groq API for live headers
+    if force or last_up == 0.0:
         groq_key = load_config().get("groq_key", "").strip()
         if groq_key:
             try:
@@ -611,8 +649,26 @@ def get_groq_rate_limits() -> dict:
                 )
                 if probe_resp.status_code == 200:
                     update_groq_limits_from_headers(probe_resp.headers)
+                    return dict(GLOBAL_GROQ_LIMITS)
             except Exception:
                 pass
+
+    # If elapsed time has exceeded reset duration, Groq's rolling 60s window has refilled tokens
+    reset_sec = parse_duration_seconds(GLOBAL_GROQ_LIMITS.get("reset_tokens", "0s"))
+    if elapsed >= max(reset_sec, 8.0):
+        GLOBAL_GROQ_LIMITS["remaining_tokens"] = GLOBAL_GROQ_LIMITS["limit_tokens"]
+        GLOBAL_GROQ_LIMITS["reset_tokens"] = "0s"
+    elif reset_sec > 0:
+        remaining_sec = max(0.0, reset_sec - elapsed)
+        GLOBAL_GROQ_LIMITS["reset_tokens"] = f"{round(remaining_sec, 1)}s"
+        # Proportional token replenishment
+        fraction_refilled = min(1.0, elapsed / reset_sec)
+        limit_t = GLOBAL_GROQ_LIMITS["limit_tokens"]
+        rem_t = GLOBAL_GROQ_LIMITS["remaining_tokens"]
+        if limit_t > rem_t:
+            interpolated = int(rem_t + (limit_t - rem_t) * fraction_refilled)
+            GLOBAL_GROQ_LIMITS["remaining_tokens"] = min(limit_t, interpolated)
+
     return dict(GLOBAL_GROQ_LIMITS)
 
 
@@ -656,7 +712,24 @@ def polish_text_unified(raw_text: str, cfg: dict) -> tuple[str, float, str]:
         "8. Output: Return ONLY the polished text with no conversational preamble, no quotes, and no commentary."
     )
     if custom_vocab.strip():
-        sys_msg += f"\nCustom vocabulary / context hints: {custom_vocab.strip()}"
+        # Separate direct terms from phonetic replacement rules
+        vocab_entries = [v.strip() for v in custom_vocab.split(",") if v.strip()]
+        direct_terms = []
+        acoustic_rules = []
+        for ent in vocab_entries:
+            if "->" in ent or "→" in ent:
+                sep = "->" if "->" in ent else "→"
+                parts = ent.split(sep, 1)
+                src, dst = parts[0].strip(), parts[1].strip()
+                if src and dst:
+                    acoustic_rules.append(f"'{src}' means '{dst}'")
+            else:
+                direct_terms.append(ent)
+
+        if direct_terms:
+            sys_msg += f"\nCustom vocabulary / context hints: {', '.join(direct_terms)}"
+        if acoustic_rules:
+            sys_msg += f"\nMandatory phonetic acoustic corrections (repair acoustic STT slips): {'; '.join(acoustic_rules)}"
 
     if is_single_word:
         user_prompt = (
@@ -985,7 +1058,9 @@ def inference_worker():
             tech_baseline = "Vozia, Groq, Groq API, Groq limit, Vercel, LiveKit, Conduit, Next.js, Docker, GitHub Actions, CI/CD, Supabase, Tailwind, React, TypeScript, PR, API"
             cues.append(tech_baseline)
             if custom_vocab:
-                cues.append(custom_vocab)
+                sanitized_cues = sanitize_custom_vocab(custom_vocab)
+                if sanitized_cues:
+                    cues.append(sanitized_cues.rstrip("."))
             if context_app:
                 cues.append(context_app)
             if context_title:
@@ -2665,7 +2740,8 @@ class DaemonHandler(BaseHTTPRequestHandler):
             res = check_openrouter_balance(api_key)
             self._send_json(200, res)
         elif path in ("/api/groq_limits", "/api/rate_limits"):
-            self._send_json(200, get_groq_rate_limits())
+            force_probe = query.get("force", ["0"])[0] in ("1", "true", "yes")
+            self._send_json(200, get_groq_rate_limits(force=force_probe))
         else:
             self._send_json(404, {"error": "not found"})
 
