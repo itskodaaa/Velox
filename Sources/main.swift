@@ -563,10 +563,18 @@ final class AppState: ObservableObject {
 
         DispatchQueue.main.async {
             self.availableMicDevices = devices
-            self.updateCurrentMicName()
+            // If the previously saved mic is no longer plugged in / connected, fall back to System Default
             if !self.selectedMicName.isEmpty && self.selectedMicName != "System Default" {
-                self.applyCoreAudioDevice(name: self.selectedMicName)
+                let isStillConnected = devices.contains { $0.name == self.selectedMicName }
+                if !isStillConnected {
+                    print("[AudioDevice] Previously selected mic '\(self.selectedMicName)' is disconnected. Reverting to System Default.")
+                    self.selectedMicName = "System Default"
+                    self.saveConfigToDisk()
+                } else {
+                    self.applyCoreAudioDevice(name: self.selectedMicName)
+                }
             }
+            self.updateCurrentMicName()
         }
     }
 
@@ -606,7 +614,7 @@ final class AppState: ObservableObject {
         } else if let def = AVCaptureDevice.default(for: .audio) {
             self.currentMicName = def.localizedName
         } else {
-            self.currentMicName = "Default Microphone"
+            self.currentMicName = "MacBook Air Microphone"
         }
     }
 
