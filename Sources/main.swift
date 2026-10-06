@@ -17,6 +17,7 @@ struct AudioInputDevice: Identifiable, Hashable {
 // MARK: - Control Center Tab Navigation
 enum ControlCenterTab: String, CaseIterable {
     case dictate = "Dictate"
+    case history = "History"
     case flow = "Flow"
     case companion = "Companion"
     case settings = "Settings"
@@ -24,10 +25,101 @@ enum ControlCenterTab: String, CaseIterable {
     var icon: String {
         switch self {
         case .dictate: return "mic.fill"
+        case .history: return "clock.arrow.circlepath"
         case .flow: return "timer"
         case .companion: return "sparkles"
         case .settings: return "slider.horizontal.3"
         }
+    }
+}
+
+// MARK: - Transcription History Item Model
+struct TranscriptionHistoryItem: Identifiable, Codable, Equatable {
+    var id: String
+    var timestamp: String?
+    var final_text: String?
+    var raw_text: String?
+    var stt_ms: Double?
+    var llm_ms: Double?
+    var total_ms: Double?
+    var word_count: Int?
+    var char_count: Int?
+    var model: String?
+    var polish_model: String?
+    var cost_usd: Double?
+    var cost_label: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, timestamp, final_text, raw_text, stt_ms, llm_ms, total_ms, word_count, char_count, model, polish_model, cost_usd, cost_label
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let idStr = try? container.decode(String.self, forKey: .id) {
+            self.id = idStr
+        } else if let idInt = try? container.decode(Int64.self, forKey: .id) {
+            self.id = String(idInt)
+        } else {
+            self.id = UUID().uuidString
+        }
+        self.timestamp = try? container.decodeIfPresent(String.self, forKey: .timestamp)
+        self.final_text = try? container.decodeIfPresent(String.self, forKey: .final_text)
+        self.raw_text = try? container.decodeIfPresent(String.self, forKey: .raw_text)
+        self.stt_ms = try? container.decodeIfPresent(Double.self, forKey: .stt_ms)
+        self.llm_ms = try? container.decodeIfPresent(Double.self, forKey: .llm_ms)
+        self.total_ms = try? container.decodeIfPresent(Double.self, forKey: .total_ms)
+        self.word_count = try? container.decodeIfPresent(Int.self, forKey: .word_count)
+        self.char_count = try? container.decodeIfPresent(Int.self, forKey: .char_count)
+        self.model = try? container.decodeIfPresent(String.self, forKey: .model)
+        self.polish_model = try? container.decodeIfPresent(String.self, forKey: .polish_model)
+        self.cost_usd = try? container.decodeIfPresent(Double.self, forKey: .cost_usd)
+        self.cost_label = try? container.decodeIfPresent(String.self, forKey: .cost_label)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encodeIfPresent(timestamp, forKey: .timestamp)
+        try container.encodeIfPresent(final_text, forKey: .final_text)
+        try container.encodeIfPresent(raw_text, forKey: .raw_text)
+        try container.encodeIfPresent(stt_ms, forKey: .stt_ms)
+        try container.encodeIfPresent(llm_ms, forKey: .llm_ms)
+        try container.encodeIfPresent(total_ms, forKey: .total_ms)
+        try container.encodeIfPresent(word_count, forKey: .word_count)
+        try container.encodeIfPresent(char_count, forKey: .char_count)
+        try container.encodeIfPresent(model, forKey: .model)
+        try container.encodeIfPresent(polish_model, forKey: .polish_model)
+        try container.encodeIfPresent(cost_usd, forKey: .cost_usd)
+        try container.encodeIfPresent(cost_label, forKey: .cost_label)
+    }
+
+    var text: String {
+        let f = (final_text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !f.isEmpty { return f }
+        return (raw_text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var displayDurationOrLatency: String {
+        if let total = total_ms, total > 0 {
+            if total >= 1000 {
+                return String(format: "%.1fs", total / 1000.0)
+            } else {
+                return "\(Int(total))ms"
+            }
+        }
+        return ""
+    }
+
+    var displayModelBadge: String {
+        if let p = polish_model, (p.contains("Groq") || p.contains("qwen") || p.contains("ok")) {
+            return "Groq 27B"
+        }
+        if let m = model, !m.isEmpty {
+            if m.contains("Groq") { return "Groq STT" }
+            if m.contains("MLX") || m.contains("Metal") { return "M1 Turbo" }
+            return m
+        }
+        return "Whisper"
     }
 }
 
@@ -83,6 +175,14 @@ final class AppState: ObservableObject {
 
     // Menu Bar Control Center Active Tab
     @Published var activeTab: ControlCenterTab = .dictate
+
+    // MARK: - Transcription History & Failure Retry
+    @Published var historyItems: [TranscriptionHistoryItem] = []
+    @Published var lastTranscriptionFailed: Bool = false
+    @Published var lastFailedAudioPath: String = ""
+    @Published var lastErrorReason: String = ""
+    @Published var lastRawSpeechText: String = ""
+    @Published var copiedItemId: String? = nil
 
     // MARK: - Flow Mode Focus Timer
     @Published var isFlowActive: Bool = false
@@ -285,6 +385,7 @@ final class AppState: ObservableObject {
 
     private init() {
         loadConfigFromDisk()
+        loadHistoryFromDisk()
         refreshAudioDevices()
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
@@ -335,6 +436,83 @@ final class AppState: ObservableObject {
         applyTheme()
         refreshAudioDevices()
         refreshOpenRouterBalance()
+    }
+
+    // MARK: - History & Retry Management
+    func loadHistoryFromDisk() {
+        let historyUrl = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".parakeetflow")
+            .appendingPathComponent("history.json")
+        guard let data = try? Data(contentsOf: historyUrl) else { return }
+        if let items = try? JSONDecoder().decode([TranscriptionHistoryItem].self, from: data) {
+            DispatchQueue.main.async {
+                self.historyItems = items
+            }
+        }
+    }
+
+    func deleteHistoryItem(id: String) {
+        historyItems.removeAll { $0.id == id }
+        saveHistoryToDisk()
+        if let url = URL(string: "http://127.0.0.1:18765/api/history/delete") {
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.httpBody = try? JSONSerialization.data(withJSONObject: ["id": id])
+            URLSession.shared.dataTask(with: req).resume()
+        }
+    }
+
+    func clearAllHistory() {
+        historyItems.removeAll()
+        saveHistoryToDisk()
+        if let url = URL(string: "http://127.0.0.1:18765/api/history/clear") {
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            URLSession.shared.dataTask(with: req).resume()
+        }
+    }
+
+    private func saveHistoryToDisk() {
+        let historyDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".parakeetflow")
+        let historyUrl = historyDir.appendingPathComponent("history.json")
+        try? FileManager.default.createDirectory(at: historyDir, withIntermediateDirectories: true)
+        if let data = try? JSONEncoder().encode(historyItems) {
+            try? data.write(to: historyUrl)
+        }
+    }
+
+    func copyTextToClipboard(_ text: String, itemId: String? = nil) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+        NSSound(named: "Tink")?.play()
+        if let iId = itemId {
+            copiedItemId = iId
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                if self.copiedItemId == iId {
+                    self.copiedItemId = nil
+                }
+            }
+        }
+    }
+
+    func retryLastFailedTranscription() {
+        var path = lastFailedAudioPath
+        if path.isEmpty || !FileManager.default.fileExists(atPath: path) {
+            let backup = "/tmp/parakeet_last_recording.wav"
+            if FileManager.default.fileExists(atPath: backup) {
+                path = backup
+                lastFailedAudioPath = backup
+            } else {
+                statusText = "No recording audio found"
+                return
+            }
+        }
+        statusText = "Retrying transcription..."
+        isProcessing = true
+        lastTranscriptionFailed = false
+        DictationService.shared.transcribeAndPaste(audioPath: path)
     }
 
     func applyTheme() {
@@ -893,7 +1071,14 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
 
             self.isStopping = false
             let exists = FileManager.default.fileExists(atPath: self.recordPath)
-            completion(exists ? self.recordPath : nil)
+            if exists {
+                let backupPath = "/tmp/parakeet_last_recording.wav"
+                try? FileManager.default.removeItem(atPath: backupPath)
+                try? FileManager.default.copyItem(atPath: self.recordPath, toPath: backupPath)
+                completion(backupPath)
+            } else {
+                completion(nil)
+            }
         }
     }
 }
@@ -1076,8 +1261,11 @@ final class DictationService {
                 AppState.shared.isProcessing = false
                 if let err = err {
                     print("[DictationService] Request error: \(err.localizedDescription)")
+                    AppState.shared.lastTranscriptionFailed = true
+                    AppState.shared.lastFailedAudioPath = audioPath
+                    AppState.shared.lastErrorReason = err.localizedDescription
                     AppState.shared.statusText = "Error: \(err.localizedDescription)"
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
                         AppState.shared.statusText = ""
                         FloatingHUDController.shared.hide()
                     }
@@ -1086,8 +1274,11 @@ final class DictationService {
 
                 guard let data = data,
                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    AppState.shared.lastTranscriptionFailed = true
+                    AppState.shared.lastFailedAudioPath = audioPath
+                    AppState.shared.lastErrorReason = "Invalid server response"
                     AppState.shared.statusText = "Invalid server response"
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
                         AppState.shared.statusText = ""
                         FloatingHUDController.shared.hide()
                     }
@@ -1102,20 +1293,31 @@ final class DictationService {
                 let rawSpeech = (json["raw_text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 let finalText = !rawFinal.isEmpty ? rawFinal : rawSpeech
 
+                if !rawSpeech.isEmpty {
+                    AppState.shared.lastRawSpeechText = rawSpeech
+                }
+
                 guard !finalText.isEmpty else {
-                    let errMsg = json["error"] as? String
-                    AppState.shared.statusText = errMsg ?? "No speech detected"
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                    let errMsg = (json["error"] as? String) ?? (json["warning"] as? String) ?? "No speech detected"
+                    AppState.shared.lastTranscriptionFailed = true
+                    AppState.shared.lastFailedAudioPath = audioPath
+                    AppState.shared.lastErrorReason = errMsg
+                    AppState.shared.statusText = errMsg
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
                         AppState.shared.statusText = ""
                         FloatingHUDController.shared.hide()
                     }
                     return
                 }
 
+                AppState.shared.lastTranscriptionFailed = false
+                AppState.shared.lastErrorReason = ""
+                AppState.shared.lastFailedAudioPath = ""
                 let totalMs = round(Date().timeIntervalSince(tStart) * 1000)
                 AppState.shared.lastResultText = finalText
                 AppState.shared.lastLatencyMs = totalMs
                 AppState.shared.lastTranscriptionFinishedTime = ProcessInfo.processInfo.systemUptime
+                AppState.shared.loadHistoryFromDisk()
 
                 // 1. Immediately place on clipboard so text is never lost
                 let pasteboard = NSPasteboard.general
@@ -4449,8 +4651,12 @@ struct MenuBarControlCenterView: View {
                 .padding(.bottom, 6)
 
                 // Navigation Tabs
-                VStack(spacing: 5) {
+                VStack(spacing: 4) {
                     SidebarTabButton(tab: .dictate, current: state.activeTab, isDark: isDark) { state.activeTab = .dictate }
+                    SidebarTabButton(tab: .history, current: state.activeTab, isDark: isDark) {
+                        state.activeTab = .history
+                        state.loadHistoryFromDisk()
+                    }
                     SidebarTabButton(tab: .flow, current: state.activeTab, isDark: isDark) { state.activeTab = .flow }
                     SidebarTabButton(tab: .companion, current: state.activeTab, isDark: isDark) { state.activeTab = .companion }
                     SidebarTabButton(tab: .settings, current: state.activeTab, isDark: isDark) { state.activeTab = .settings }
@@ -4512,6 +4718,8 @@ struct MenuBarControlCenterView: View {
                     switch state.activeTab {
                     case .dictate:
                         DictateTabPane()
+                    case .history:
+                        HistoryTabPane()
                     case .flow:
                         FlowTabPane()
                     case .companion:
@@ -4520,18 +4728,19 @@ struct MenuBarControlCenterView: View {
                         SettingsTabPane()
                     }
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 14)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(width: 330)
+            .frame(width: 340)
             .background(baseBg)
         }
-        .frame(width: 410, height: 385)
+        .frame(width: 420, height: 410)
         .background(baseBg)
         .preferredColorScheme(state.appTheme == "dark" ? .dark : (state.appTheme == "light" ? .light : nil))
         .onAppear {
             state.loadConfigFromDisk()
+            state.loadHistoryFromDisk()
             state.refreshPermissions()
             state.applyTheme()
         }
@@ -4549,21 +4758,21 @@ struct SidebarTabButton: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 3.5) {
+            VStack(spacing: 3) {
                 Image(systemName: tab.icon)
-                    .font(.system(size: 13, weight: isSelected ? .bold : .regular))
+                    .font(.system(size: 12.5, weight: isSelected ? .bold : .regular))
                     .foregroundColor(isSelected ? AppState.shared.hudAccentColor : (isDark ? Color.white.opacity(0.45) : Color.black.opacity(0.45)))
                 Text(tab.rawValue)
-                    .font(.system(size: 9, weight: isSelected ? .bold : .medium))
+                    .font(.system(size: 8.5, weight: isSelected ? .bold : .medium))
                     .foregroundColor(isSelected ? (isDark ? .white : .black) : (isDark ? Color.white.opacity(0.55) : Color.black.opacity(0.55)))
             }
-            .frame(width: 68, height: 44)
+            .frame(width: 68, height: 39)
             .background(
-                RoundedRectangle(cornerRadius: 8)
+                RoundedRectangle(cornerRadius: 7)
                     .fill(isSelected ? (isDark ? Color.white.opacity(0.09) : Color.black.opacity(0.07)) : Color.clear)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 8)
+                RoundedRectangle(cornerRadius: 7)
                     .strokeBorder(isSelected ? (isDark ? Color.white.opacity(0.12) : Color.black.opacity(0.09)) : Color.clear, lineWidth: 0.8)
             )
         }
@@ -4633,6 +4842,76 @@ struct DictateTabPane: View {
                 }
                 .padding(7)
                 .background(Color.primary.opacity(0.05))
+                .cornerRadius(6)
+            }
+
+            // Transcription Failure & Retry Card
+            if state.lastTranscriptionFailed {
+                HStack(spacing: 7) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11))
+                        .foregroundColor(.orange)
+
+                    VStack(alignment: .leading, spacing: 1.5) {
+                        Text("Transcription Failed")
+                            .font(.system(size: 9.5, weight: .bold))
+                            .foregroundColor(.primary)
+                        Text(state.lastErrorReason.isEmpty ? "Check microphone / connection" : state.lastErrorReason)
+                            .font(.system(size: 8.5))
+                            .foregroundColor(.secondary)
+                            .lineLimit(2)
+                    }
+
+                    Spacer()
+
+                    Button(action: {
+                        state.retryLastFailedTranscription()
+                    }) {
+                        HStack(spacing: 3) {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 8, weight: .bold))
+                            Text("Retry")
+                                .font(.system(size: 8.5, weight: .bold))
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3.5)
+                        .background(Color.orange.opacity(0.2))
+                        .foregroundColor(.orange)
+                        .cornerRadius(4)
+                    }
+                    .buttonStyle(.plain)
+
+                    if !state.lastRawSpeechText.isEmpty {
+                        Button(action: {
+                            state.copyTextToClipboard(state.lastRawSpeechText)
+                        }) {
+                            Text("Copy Raw")
+                                .font(.system(size: 8, weight: .semibold))
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 3.5)
+                                .background(Color.primary.opacity(0.08))
+                                .cornerRadius(4)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Copy detected raw speech")
+                    }
+
+                    Button(action: {
+                        state.lastTranscriptionFailed = false
+                    }) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundColor(.secondary)
+                            .padding(3)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(7)
+                .background(Color.orange.opacity(0.09))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .strokeBorder(Color.orange.opacity(0.25), lineWidth: 0.8)
+                )
                 .cornerRadius(6)
             }
 
@@ -4849,7 +5128,7 @@ struct DictateTabPane: View {
             }
 
             // Previous Dictation Recovery Pill
-            let prev = !state.unpastedText.isEmpty ? state.unpastedText : state.lastResultText
+            let prev = !state.unpastedText.isEmpty ? state.unpastedText : (!state.lastResultText.isEmpty ? state.lastResultText : state.lastRawSpeechText)
             if !prev.isEmpty {
                 HStack(spacing: 4) {
                     Image(systemName: "doc.text")
@@ -4908,6 +5187,343 @@ struct DictateTabPane: View {
         .onAppear {
             state.refreshGroqRateLimits()
         }
+    }
+}
+
+// MARK: - Tab Pane: History
+struct HistoryTabPane: View {
+    @ObservedObject var state = AppState.shared
+    @State private var searchText: String = ""
+    @State private var showClearConfirm: Bool = false
+
+    var filteredItems: [TranscriptionHistoryItem] {
+        if searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return state.historyItems
+        }
+        let query = searchText.lowercased()
+        return state.historyItems.filter { item in
+            item.text.lowercased().contains(query) ||
+            (item.timestamp?.lowercased().contains(query) ?? false) ||
+            (item.model?.lowercased().contains(query) ?? false)
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 8) {
+            // Header
+            HStack {
+                HStack(spacing: 6) {
+                    Text("History")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                    Text("\(state.historyItems.count)")
+                        .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1.5)
+                        .background(state.hudAccentColor.opacity(0.14))
+                        .foregroundColor(state.hudAccentColor)
+                        .cornerRadius(8)
+                }
+
+                Spacer()
+
+                HStack(spacing: 6) {
+                    // Refresh Button
+                    Button(action: {
+                        state.loadHistoryFromDisk()
+                    }) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(.secondary)
+                            .padding(4)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Reload history")
+
+                    // Clear All Button
+                    if !state.historyItems.isEmpty {
+                        if showClearConfirm {
+                            Button("Confirm Clear") {
+                                state.clearAllHistory()
+                                showClearConfirm = false
+                            }
+                            .font(.system(size: 8.5, weight: .bold))
+                            .foregroundColor(.red)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(Color.red.opacity(0.12))
+                            .cornerRadius(4)
+                            .buttonStyle(.plain)
+                        } else {
+                            Button(action: {
+                                showClearConfirm = true
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
+                                    showClearConfirm = false
+                                }
+                            }) {
+                                Image(systemName: "trash")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.secondary)
+                                    .padding(4)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Clear all history")
+                        }
+                    }
+                }
+            }
+
+            // Search Bar
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 9.5))
+                    .foregroundColor(.secondary)
+
+                TextField("Search past dictations...", text: $searchText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 10.5))
+
+                if !searchText.isEmpty {
+                    Button(action: { searchText = "" }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 9.5))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4.5)
+            .background(Color.primary.opacity(0.04))
+            .cornerRadius(6)
+
+            // Transcription Failure Banner (if any)
+            if state.lastTranscriptionFailed {
+                HStack(spacing: 7) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10.5))
+                        .foregroundColor(.orange)
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Last Transcription Failed")
+                            .font(.system(size: 9.5, weight: .bold))
+                            .foregroundColor(.primary)
+                        Text(state.lastErrorReason.isEmpty ? "Check microphone / connection" : state.lastErrorReason)
+                            .font(.system(size: 8.5))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+
+                    Spacer()
+
+                    Button(action: {
+                        state.retryLastFailedTranscription()
+                    }) {
+                        HStack(spacing: 3) {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 7.5, weight: .bold))
+                            Text("Retry")
+                                .font(.system(size: 8.5, weight: .bold))
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(Color.orange.opacity(0.2))
+                        .foregroundColor(.orange)
+                        .cornerRadius(4)
+                    }
+                    .buttonStyle(.plain)
+
+                    if !state.lastRawSpeechText.isEmpty {
+                        Button(action: {
+                            state.copyTextToClipboard(state.lastRawSpeechText)
+                        }) {
+                            Text("Copy Raw")
+                                .font(.system(size: 8, weight: .semibold))
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 3)
+                                .background(Color.primary.opacity(0.08))
+                                .cornerRadius(4)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Copy detected raw speech")
+                    }
+
+                    Button(action: {
+                        state.lastTranscriptionFailed = false
+                    }) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 8))
+                            .foregroundColor(.secondary)
+                            .padding(2)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(6)
+                .background(Color.orange.opacity(0.09))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .strokeBorder(Color.orange.opacity(0.25), lineWidth: 0.8)
+                )
+                .cornerRadius(6)
+            }
+
+            // History Items Scroll List
+            if filteredItems.isEmpty {
+                VStack(spacing: 8) {
+                    Spacer()
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 26))
+                        .foregroundColor(.secondary.opacity(0.45))
+                    Text(searchText.isEmpty ? "No transcripts yet" : "No matches found")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.secondary)
+                    Text(searchText.isEmpty ? "Dictate with ⌥ Space to record and view transcripts here." : "Try searching for a different keyword.")
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary.opacity(0.75))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 16)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView(showsIndicators: true) {
+                    LazyVStack(spacing: 7) {
+                        ForEach(filteredItems) { item in
+                            HistoryCardView(item: item)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+        }
+        .onAppear {
+            state.loadHistoryFromDisk()
+        }
+    }
+}
+
+// MARK: - Individual History Card Component
+struct HistoryCardView: View {
+    let item: TranscriptionHistoryItem
+    @ObservedObject var state = AppState.shared
+    @State private var isExpanded: Bool = false
+
+    var isCopied: Bool {
+        state.copiedItemId == item.id
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            // Card Header Row: Timestamp + Engine Badge + Action Buttons
+            HStack(spacing: 5) {
+                Text(item.timestamp ?? "Recent")
+                    .font(.system(size: 8.5, weight: .semibold))
+                    .foregroundColor(.secondary)
+
+                Text(item.displayModelBadge)
+                    .font(.system(size: 7.5, weight: .medium))
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1.5)
+                    .background(Color.primary.opacity(0.06))
+                    .cornerRadius(3)
+                    .foregroundColor(.secondary)
+
+                Spacer()
+
+                // 1-Click Copy Button with immediate visual feedback
+                Button(action: {
+                    state.copyTextToClipboard(item.text, itemId: item.id)
+                }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
+                            .font(.system(size: 7.5, weight: isCopied ? .bold : .medium))
+                        Text(isCopied ? "Copied ✓" : "Copy")
+                            .font(.system(size: 8, weight: isCopied ? .bold : .semibold))
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2.5)
+                    .background(isCopied ? Color.green.opacity(0.2) : Color.primary.opacity(0.08))
+                    .foregroundColor(isCopied ? .green : .primary)
+                    .cornerRadius(4)
+                }
+                .buttonStyle(.plain)
+                .help("Copy full text to clipboard")
+
+                // Delete Item Button
+                Button(action: {
+                    state.deleteHistoryItem(id: item.id)
+                }) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 8))
+                        .foregroundColor(.secondary.opacity(0.6))
+                        .padding(3)
+                }
+                .buttonStyle(.plain)
+                .help("Delete transcript")
+            }
+
+            // Card Body: The Transcribed Text
+            Text(item.text)
+                .font(.system(size: 11, weight: .regular))
+                .lineSpacing(2)
+                .foregroundColor(.primary.opacity(0.92))
+                .lineLimit(isExpanded ? nil : 4)
+                .textSelection(.enabled)
+                .onTapGesture {
+                    if item.text.count > 160 {
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            isExpanded.toggle()
+                        }
+                    }
+                }
+
+            // Card Footer: Metadata (words, latency, cost)
+            HStack(spacing: 4) {
+                let wCount = item.word_count ?? item.text.split(separator: " ").count
+                Text("\(wCount) words")
+                    .font(.system(size: 8, weight: .medium))
+                    .foregroundColor(.secondary.opacity(0.8))
+
+                if !item.displayDurationOrLatency.isEmpty {
+                    Text("•")
+                        .font(.system(size: 7))
+                        .foregroundColor(.secondary.opacity(0.5))
+                    Text(item.displayDurationOrLatency)
+                        .font(.system(size: 8))
+                        .foregroundColor(.secondary.opacity(0.8))
+                }
+
+                if let cost = item.cost_label, !cost.isEmpty {
+                    Text("•")
+                        .font(.system(size: 7))
+                        .foregroundColor(.secondary.opacity(0.5))
+                    Text(cost)
+                        .font(.system(size: 7.5))
+                        .foregroundColor(.secondary.opacity(0.8))
+                }
+
+                Spacer()
+
+                if item.text.count > 160 {
+                    Button(action: {
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            isExpanded.toggle()
+                        }
+                    }) {
+                        Text(isExpanded ? "Show Less" : "Show More")
+                            .font(.system(size: 7.5, weight: .semibold))
+                            .foregroundColor(state.hudAccentColor)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(8)
+        .background(Color.primary.opacity(0.035))
+        .overlay(
+            RoundedRectangle(cornerRadius: 7)
+                .strokeBorder(isCopied ? Color.green.opacity(0.3) : Color.primary.opacity(0.06), lineWidth: 0.8)
+        )
+        .cornerRadius(7)
     }
 }
 
@@ -6154,7 +6770,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let p = NSPopover()
-        p.contentSize = NSSize(width: 410, height: 385)
+        p.contentSize = NSSize(width: 420, height: 410)
         p.behavior = .transient
         p.contentViewController = NSHostingController(rootView: MenuBarControlCenterView())
         self.popover = p
