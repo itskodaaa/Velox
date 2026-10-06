@@ -323,11 +323,9 @@ final class AppState: ObservableObject {
     @Published var cursorLookX: Double = 0.0 // -1.0 (left) ... +1.0 (right)
     @Published var cursorLookY: Double = 0.0 // -1.0 (down) ... +1.0 (up)
     @Published var isCursorNear: Bool = false
-    @Published var lastTypingTime: Double = 0.0
-    @Published var typingStartTime: Double = 0.0
-    @Published var typingKeystrokeCount: Int = 0
-    @Published var typingSpeedBurst: Bool = false
-    @Published var isUserTyping: Bool = false
+    @Published var cursorWakeTime: Double = 0.0 // Timestamp when mouse woke the pet from idle
+    var lastTypingTime: Double = 0.0
+    var isUserTyping: Bool = false
 
     var hudWidth: CGFloat {
         switch hudSize {
@@ -1860,6 +1858,96 @@ struct CompanionMotionEngine {
             antennaBulbPulse: antennaBulbPulse
         )
     }
+
+    /// Computes realistic organic wake-up sequence when the cursor begins moving:
+    /// Phase 1 (0.0s - 0.22s): Sudden alert "snap" (eyes wide, subtle perk up)
+    /// Phase 2 (0.22s - 0.65s): Focused head shake (clearing thoughts, alert double-tilt)
+    /// Phase 3 (0.65s - 1.25s): Slow, smooth, inquisitive glance toward the cursor via cubic Bézier
+    /// Phase 4 (> 1.25s): Fluid curious cursor following with subtle inquisitive head tilt & eye micro-glance
+    static func sampleWakeAndTrackingKinematics(
+        time: Double,
+        wakeTime: Double,
+        targetLookX: Double,
+        targetLookY: Double,
+        isTyping: Bool
+    ) -> IdlePose {
+        let now = ProcessInfo.processInfo.systemUptime
+        let elapsed = max(0.0, now - wakeTime)
+
+        // Curious inquisitive offset: slightly tilted ear & head when following cursor
+        let curiousHeadAngle = targetLookX * 5.5 + (sin(time * 3.5) * 1.2)
+        let microCuriousBob = sin(time * 3.0) * 0.45
+
+        var lookX: Double = 0.0
+        var lookY: Double = 0.0
+        var headTilt: Double = 0.0
+        var headBob: Double = 0.0
+        var earTwitchLeft: Double = 0.0
+        var earTwitchRight: Double = 0.0
+        var pawLeftY: Double = 0.0
+        var pawRightY: Double = 0.0
+        let antennaBulbPulse: Bool = true
+
+        if elapsed < 0.22 {
+            // Phase 1: Alert Snap! (Suddenly focuses, perked up)
+            let t = elapsed / 0.22
+            let snap = easeOutBack(t, overshoot: 1.35)
+            lookX = 0.0
+            lookY = -snap * 0.4 // Snaps eyes slightly upward
+            headTilt = 0.0
+            headBob = -snap * 1.5 // Jumps up slightly in surprise/alertness
+            earTwitchLeft = snap * 6.0
+            earTwitchRight = snap * 6.0
+            pawLeftY = -snap * 1.2
+            pawRightY = -snap * 1.2
+        } else if elapsed < 0.65 {
+            // Phase 2: Focused Head Shake! (Left-right quick double shake to orient itself)
+            let t = (elapsed - 0.22) / 0.43
+            let shakeAngle = sin(t * .pi * 4.0) * (1.0 - t) * 7.5 // Damped oscillation shake
+            lookX = sin(t * .pi * 3.0) * 0.3 * (1.0 - t)
+            lookY = -0.1
+            headTilt = shakeAngle
+            headBob = -0.5 + sin(t * .pi * 4.0) * 0.4
+            earTwitchLeft = -shakeAngle * 0.8
+            earTwitchRight = shakeAngle * 0.8
+            pawLeftY = -0.5
+            pawRightY = -0.5
+        } else if elapsed < 1.35 {
+            // Phase 3: Slowly look at the cursor via Cubic Bézier curve
+            let t = (elapsed - 0.65) / 0.70
+            let ease = easeInOutCubic(t)
+            lookX = ease * targetLookX
+            lookY = ease * targetLookY
+            headTilt = ease * curiousHeadAngle
+            headBob = microCuriousBob
+            earTwitchLeft = (targetLookX < 0 ? 5.5 : -2.0) * ease
+            earTwitchRight = (targetLookX > 0 ? 5.5 : -2.0) * ease
+            pawLeftY = 0.0
+            pawRightY = 0.0
+        } else {
+            // Phase 4: Full Curious Follow! Follows cursor with inquisitive head tilt and alive micro-glance
+            lookX = targetLookX
+            lookY = targetLookY
+            headTilt = curiousHeadAngle
+            headBob = microCuriousBob
+            earTwitchLeft = targetLookX < 0 ? 4.5 : -1.5
+            earTwitchRight = targetLookX > 0 ? 4.5 : -1.5
+            pawLeftY = 0.0
+            pawRightY = 0.0
+        }
+
+        return IdlePose(
+            lookX: lookX,
+            lookY: lookY,
+            headTilt: headTilt,
+            headBob: headBob,
+            earTwitchLeft: earTwitchLeft,
+            earTwitchRight: earTwitchRight,
+            pawLeftY: pawLeftY,
+            pawRightY: pawRightY,
+            antennaBulbPulse: antennaBulbPulse
+        )
+    }
 }
 
 // MARK: - 1. GearBot Character (Curious Cyber Inventor)
@@ -1875,6 +1963,7 @@ struct GearBotCharacterView: View {
     var cursorLookX: Double = 0.0
     var cursorLookY: Double = 0.0
     var isCursorNear: Bool = false
+    var cursorWakeTime: Double = 0.0
     var isTyping: Bool = false
     var isFlowActive: Bool = false
     var isLookingAtTimer: Bool = false
@@ -1886,6 +1975,13 @@ struct GearBotCharacterView: View {
     var body: some View {
         let isIdle = !isRecording && !isProcessing && !isDone && !isTyping && !isLookingAtTimer && !isCursorNear
         let idlePose = CompanionMotionEngine.sampleIdleKinematics(time: time)
+        let trackingPose = CompanionMotionEngine.sampleWakeAndTrackingKinematics(
+            time: time,
+            wakeTime: cursorWakeTime,
+            targetLookX: cursorLookX,
+            targetLookY: cursorLookY,
+            isTyping: isTyping
+        )
 
         // Head tilt: reacts dynamically to typing, timer look-at, cursor, or organic idle wandering
         let headTilt: Double = {
@@ -1898,7 +1994,7 @@ struct GearBotCharacterView: View {
             } else if isTimerLow {
                 return sin(time * 24.0) * (isTimerUrgent ? 1.4 : 0.8) // Nervous timer jitter
             } else if isCursorNear {
-                return cursorLookX * 6.5
+                return trackingPose.headTilt
             } else if isProcessing {
                 return sin(time * 3.5) * 5.0
             } else if isRecording {
@@ -1925,7 +2021,7 @@ struct GearBotCharacterView: View {
             } else if isTimerLow {
                 return CGFloat(sin(time * 24.0) * 0.6) // Nervous pacing
             } else if isCursorNear {
-                return CGFloat(-cursorLookY * 1.5)
+                return CGFloat(trackingPose.headBob)
             } else if isRecording {
                 return -CGFloat(audioLevel) * 2.5
             } else if isHovered {
@@ -1948,7 +2044,7 @@ struct GearBotCharacterView: View {
             } else if isTimerUrgent {
                 return (CGFloat(sin(time * 8.0) * 1.4), 0.0) // Nervous darting glance
             } else if isCursorNear {
-                return (CGFloat(cursorLookX * 1.6), CGFloat(-cursorLookY * 1.0))
+                return (CGFloat(trackingPose.lookX * 1.6), CGFloat(-trackingPose.lookY * 1.0))
             } else if isHovered {
                 return (0.0, -0.6)
             } else if isIdle {
@@ -2123,6 +2219,7 @@ struct NekoCharacterView: View {
     var cursorLookX: Double = 0.0
     var cursorLookY: Double = 0.0
     var isCursorNear: Bool = false
+    var cursorWakeTime: Double = 0.0
     var isTyping: Bool = false
     var isFlowActive: Bool = false
     var isLookingAtTimer: Bool = false
@@ -2134,6 +2231,13 @@ struct NekoCharacterView: View {
     var body: some View {
         let isIdle = !isRecording && !isProcessing && !isDone && !isTyping && !isLookingAtTimer && !isCursorNear
         let idlePose = CompanionMotionEngine.sampleIdleKinematics(time: time)
+        let trackingPose = CompanionMotionEngine.sampleWakeAndTrackingKinematics(
+            time: time,
+            wakeTime: cursorWakeTime,
+            targetLookX: cursorLookX,
+            targetLookY: cursorLookY,
+            isTyping: isTyping
+        )
         let blinkPhase = sin(time * 1.6)
         let isBlinking = blinkPhase > 0.96 && !isProcessing && !isDone && !isHappy && !isTimerUrgent
 
@@ -2148,7 +2252,7 @@ struct NekoCharacterView: View {
             } else if isTimerUrgent {
                 return sin(time * 26.0) * 10.0 // Nervous ear twitch
             } else if isCursorNear {
-                return cursorLookX * 8.0 - 2.0
+                return trackingPose.earTwitchLeft
             } else if isRecording {
                 return Double(audioLevel) * 9.0
             } else if isIdle {
@@ -2167,7 +2271,7 @@ struct NekoCharacterView: View {
             } else if isTimerUrgent {
                 return -sin(time * 26.0) * 10.0
             } else if isCursorNear {
-                return cursorLookX * 8.0 + 2.0
+                return trackingPose.earTwitchRight
             } else if isRecording {
                 return -Double(audioLevel) * 9.0
             } else if isIdle {
@@ -2186,7 +2290,7 @@ struct NekoCharacterView: View {
             } else if isTimerLow {
                 return sin(time * 24.0) * (isTimerUrgent ? 1.5 : 0.8) // Nervous timer jitter
             } else if isCursorNear {
-                return cursorLookX * 6.0
+                return trackingPose.headTilt
             } else if isIdle {
                 return idlePose.headTilt
             }
@@ -2206,6 +2310,8 @@ struct NekoCharacterView: View {
                 return CGFloat(sin(time * 24.0) * 0.5)
             } else if isHovered {
                 return -1.0
+            } else if isCursorNear {
+                return CGFloat(trackingPose.headBob)
             } else if isIdle {
                 return CGFloat(idlePose.headBob)
             }
@@ -2222,7 +2328,7 @@ struct NekoCharacterView: View {
             } else if isTimerUrgent {
                 return (CGFloat(sin(time * 8.0) * 1.5), 0.0)
             } else if isCursorNear {
-                return (CGFloat(cursorLookX * 1.8), CGFloat(-cursorLookY * 1.1))
+                return (CGFloat(trackingPose.lookX * 1.8), CGFloat(-trackingPose.lookY * 1.1))
             } else if isIdle {
                 return (CGFloat(idlePose.lookX), CGFloat(idlePose.lookY))
             }
@@ -2669,6 +2775,7 @@ struct BongoCatCharacterView: View {
     var cursorLookX: Double = 0.0
     var cursorLookY: Double = 0.0
     var isCursorNear: Bool = false
+    var cursorWakeTime: Double = 0.0
     var isTyping: Bool = false
     var isFlowActive: Bool = false
     var isLookingAtTimer: Bool = false
@@ -2680,6 +2787,13 @@ struct BongoCatCharacterView: View {
     var body: some View {
         let isIdle = !isRecording && !isProcessing && !isDone && !isTyping && !isLookingAtTimer && !isCursorNear
         let idlePose = CompanionMotionEngine.sampleIdleKinematics(time: time)
+        let trackingPose = CompanionMotionEngine.sampleWakeAndTrackingKinematics(
+            time: time,
+            wakeTime: cursorWakeTime,
+            targetLookX: cursorLookX,
+            targetLookY: cursorLookY,
+            isTyping: isTyping
+        )
         let blinkPhase = sin(time * 1.6)
         let isBlinking = blinkPhase > 0.95 && !isProcessing && !isDone && !isHappy && !isTimerUrgent
 
@@ -2692,6 +2806,8 @@ struct BongoCatCharacterView: View {
                 return -4.0 // Raised cheering paws!
             } else if isTyping {
                 return pawTapCycle > 0 ? 2.5 : -1.5 // Alternating tap!
+            } else if isCursorNear {
+                return CGFloat(trackingPose.pawLeftY)
             } else if isIdle {
                 return CGFloat(idlePose.pawLeftY)
             }
@@ -2705,6 +2821,8 @@ struct BongoCatCharacterView: View {
                 return -4.0
             } else if isTyping {
                 return pawTapCycle <= 0 ? 2.5 : -1.5 // Opposite tap!
+            } else if isCursorNear {
+                return CGFloat(trackingPose.pawRightY)
             } else if isIdle {
                 return CGFloat(idlePose.pawRightY)
             }
@@ -2718,6 +2836,8 @@ struct BongoCatCharacterView: View {
                 return CGFloat(sin(time * 24.0) * 0.8) // Cute subtle head groove to typing rhythm!
             } else if isTimerUrgent {
                 return -1.5 + CGFloat(abs(sin(time * 18.0))) * -1.5
+            } else if isCursorNear {
+                return CGFloat(trackingPose.headBob)
             } else if isIdle {
                 return CGFloat(idlePose.headBob)
             }
@@ -2732,7 +2852,7 @@ struct BongoCatCharacterView: View {
             } else if isTyping {
                 return -2.5 + sin(time * 6.0) * 1.5
             } else if isCursorNear {
-                return cursorLookX * 6.0
+                return trackingPose.headTilt
             } else if isIdle {
                 return idlePose.headTilt
             }
@@ -2750,15 +2870,15 @@ struct BongoCatCharacterView: View {
             } else if isTimerUrgent {
                 return (CGFloat(sin(time * 8.0) * 1.4), 0.0)
             } else if isCursorNear {
-                return (CGFloat(cursorLookX * 1.8), CGFloat(-cursorLookY * 1.1))
+                return (CGFloat(trackingPose.lookX * 1.8), CGFloat(-trackingPose.lookY * 1.1))
             } else if isIdle {
                 return (CGFloat(idlePose.lookX), CGFloat(idlePose.lookY))
             }
             return (0.0, 0.0)
         }()
 
-        let leftEarTwitch: Double = isIdle ? idlePose.earTwitchLeft * 0.7 : 0.0
-        let rightEarTwitch: Double = isIdle ? idlePose.earTwitchRight * 0.7 : 0.0
+        let leftEarTwitch: Double = isCursorNear ? trackingPose.earTwitchLeft * 0.7 : (isIdle ? idlePose.earTwitchLeft * 0.7 : 0.0)
+        let rightEarTwitch: Double = isCursorNear ? trackingPose.earTwitchRight * 0.7 : (isIdle ? idlePose.earTwitchRight * 0.7 : 0.0)
 
         VStack(spacing: -3.5) {
             // Cat Ears with pink insides
@@ -3228,6 +3348,7 @@ struct InteractiveCharacterView: View {
                     cursorLookX: state.cursorLookX,
                     cursorLookY: state.cursorLookY,
                     isCursorNear: state.isCursorNear,
+                    cursorWakeTime: state.cursorWakeTime,
                     isTyping: isTyping,
                     isLookingAtTimer: isLookingAtTimer,
                     isTimerLow: isTimerLow,
@@ -3248,6 +3369,7 @@ struct InteractiveCharacterView: View {
                     cursorLookX: state.cursorLookX,
                     cursorLookY: state.cursorLookY,
                     isCursorNear: state.isCursorNear,
+                    cursorWakeTime: state.cursorWakeTime,
                     isTyping: isTyping,
                     isLookingAtTimer: isLookingAtTimer,
                     isTimerLow: isTimerLow,
@@ -3268,6 +3390,7 @@ struct InteractiveCharacterView: View {
                     cursorLookX: state.cursorLookX,
                     cursorLookY: state.cursorLookY,
                     isCursorNear: state.isCursorNear,
+                    cursorWakeTime: state.cursorWakeTime,
                     isTyping: isTyping,
                     isLookingAtTimer: isLookingAtTimer,
                     isTimerLow: isTimerLow,
@@ -4746,13 +4869,18 @@ final class CompanionTrackerManager {
 
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
-                AppState.shared.isCursorNear = true
+                let wasNear = AppState.shared.isCursorNear
+                if !wasNear {
+                    // Pet woke up from idle: trigger wake focus snap & curious shake!
+                    AppState.shared.cursorWakeTime = now
+                    AppState.shared.isCursorNear = true
+                }
                 AppState.shared.cursorLookX = normalizedX
                 AppState.shared.cursorLookY = normalizedY
 
-                // Auto-relax eyes after 1.5s of mouse idle
+                // Auto-relax eyes after 2.0s of mouse idle
                 self.mouseIdleTimer?.invalidate()
-                let t = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: false) { _ in
+                let t = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: false) { _ in
                     AppState.shared.isCursorNear = false
                     AppState.shared.cursorLookX = 0.0
                     AppState.shared.cursorLookY = 0.0
@@ -4777,15 +4905,24 @@ final class CompanionTrackerManager {
         }
     }
 
+    private var lastKeyHandledTime: Double = 0.0
+
     private func handleKeyDown(_ event: NSEvent) {
         let now = ProcessInfo.processInfo.systemUptime
+        // Throttle key update dispatches to main thread to 20Hz (every 50ms) so typing never freezes or lags!
+        guard (now - lastKeyHandledTime) >= 0.050 else {
+            AppState.shared.lastTypingTime = now
+            AppState.shared.isUserTyping = true
+            return
+        }
+        lastKeyHandledTime = now
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             AppState.shared.lastTypingTime = now
             AppState.shared.isUserTyping = true
 
-            // Fast 0.45s debounce: immediately stops reacting once typing stops!
+            // Fast debounce: immediately stops reacting once typing stops!
             self.typingResetTimer?.invalidate()
             let t = Timer.scheduledTimer(withTimeInterval: 0.45, repeats: false) { _ in
                 AppState.shared.isUserTyping = false
