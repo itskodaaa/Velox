@@ -3435,8 +3435,8 @@ struct FloatingHUDView: View {
                                 removal: .scale(scale: 0.75).combined(with: .opacity)
                             ))
                         } else if isFailedOrRetrying {
-                            // Vertical Failure / Retry
-                            VStack(spacing: 3) {
+                            // Sleek Unified Vertical Failure / Retry
+                            VStack(spacing: 4) {
                                 Button(action: {
                                     if !state.isRetryingTranscription {
                                         state.retryLastFailedTranscription()
@@ -3445,44 +3445,47 @@ struct FloatingHUDView: View {
                                     VStack(spacing: 2) {
                                         if state.isRetryingTranscription {
                                             ProgressView()
-                                                .scaleEffect(0.48)
-                                                .frame(width: 8, height: 8)
+                                                .scaleEffect(0.50)
+                                                .frame(width: 9, height: 9)
+                                            Text("...")
+                                                .font(.system(size: 8, weight: .bold))
+                                                .foregroundColor(state.hudAccentColor)
                                         } else {
                                             Image(systemName: "arrow.clockwise")
-                                                .font(.system(size: 8, weight: .bold))
-                                                .foregroundColor(.orange)
+                                                .font(.system(size: isMini ? 8 : 9, weight: .bold))
+                                                .foregroundColor(state.hudAccentColor)
+                                            Text("Retry")
+                                                .font(.system(size: isMini ? 7.5 : 8.5, weight: .semibold, design: .rounded))
+                                                .foregroundColor(isDark ? Color.white.opacity(0.95) : Color.black.opacity(0.9))
                                         }
-                                        Text(state.isRetryingTranscription ? "..." : "Retry")
-                                            .font(.system(size: 7.5, weight: .bold, design: .rounded))
-                                            .foregroundColor(.orange)
                                     }
-                                    .padding(.horizontal, 4)
                                     .padding(.vertical, 3)
-                                    .background(Color.orange.opacity(0.18))
-                                    .cornerRadius(4)
+                                    .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
                                 .pointingHandCursor()
 
                                 if !state.isRetryingTranscription {
                                     Button(action: {
-                                        state.lastTranscriptionFailed = false
+                                        withAnimation(.spring(response: 0.24, dampingFraction: 0.75)) {
+                                            state.lastTranscriptionFailed = false
+                                        }
                                     }) {
                                         Image(systemName: "xmark")
-                                            .font(.system(size: 6.5, weight: .bold))
+                                            .font(.system(size: 7, weight: .semibold))
                                             .foregroundColor(.secondary)
-                                            .frame(width: 12, height: 12)
-                                            .background(Color.primary.opacity(0.06))
-                                            .clipShape(Circle())
+                                            .frame(width: 14, height: 14)
+                                            .contentShape(Circle())
                                     }
                                     .buttonStyle(.plain)
                                     .pointingHandCursor()
+                                    .help("Dismiss")
                                 }
                             }
-                            .padding(.vertical, 3)
+                            .padding(.vertical, 4)
                             .transition(.asymmetric(
-                                insertion: .scale(scale: 0.75).combined(with: .opacity),
-                                removal: .scale(scale: 0.75).combined(with: .opacity)
+                                insertion: .scale(scale: 0.85).combined(with: .opacity),
+                                removal: .scale(scale: 0.85).combined(with: .opacity)
                             ))
                         } else {
                             if state.listeningStyle == "waveform" {
@@ -3505,8 +3508,9 @@ struct FloatingHUDView: View {
                 .animation(.spring(response: 0.22, dampingFraction: 0.75), value: state.isHUDHovered)
                 .animation(.spring(response: 0.36, dampingFraction: 0.80), value: state.isRecording)
                 .animation(.spring(response: 0.36, dampingFraction: 0.80), value: state.isProcessing)
-                .animation(.spring(response: 0.28, dampingFraction: 0.72), value: state.isFlowActive)
                 .animation(.spring(response: 0.28, dampingFraction: 0.72), value: state.isFlowPaused)
+                .animation(.spring(response: 0.32, dampingFraction: 0.76), value: state.lastTranscriptionFailed)
+                .animation(.spring(response: 0.32, dampingFraction: 0.76), value: state.isRetryingTranscription)
                 .scaleEffect(state.isHUDDragging ? 1.05 : 1.0)
                 .frame(width: isMini ? 44 : (isSpacious ? 64 : 52), height: isMini ? 86 : (isSpacious ? 124 : 100), alignment: .center)
             } else {
@@ -3515,7 +3519,7 @@ struct FloatingHUDView: View {
                 let isFailedOrRetrying = (state.lastTranscriptionFailed || state.isRetryingTranscription) && !state.isRecording
                 let pillWidth: CGFloat = {
                     if isFailedOrRetrying {
-                        return isMini ? 84 : (isSpacious ? 116 : 98)
+                        return isMini ? 72 : (isSpacious ? 98 : 84)
                     }
                     if isFlow {
                         return isMini ? 72 : (isSpacious ? 102 : 86)
@@ -3618,57 +3622,57 @@ struct FloatingHUDView: View {
                                     removal: .scale(scale: 0.75).combined(with: .opacity)
                                 ))
                             } else if isFailedOrRetrying {
-                                // Transcription Failure & Inline Retry Pill Button
-                                HStack(spacing: 4) {
+                                // Sleek Unified Apple-Native Failure & Retry Capsule
+                                HStack(spacing: 5) {
                                     Button(action: {
                                         if !state.isRetryingTranscription {
                                             state.retryLastFailedTranscription()
                                         }
                                     }) {
-                                        HStack(spacing: 3) {
+                                        HStack(spacing: 4) {
                                             if state.isRetryingTranscription {
                                                 ProgressView()
-                                                    .scaleEffect(0.48)
-                                                    .frame(width: 8, height: 8)
-                                                Text("Retrying")
-                                                    .font(.system(size: isMini ? 8.5 : (isSpacious ? 10.5 : 9.5), weight: .bold, design: .rounded))
-                                                    .foregroundColor(.orange)
+                                                    .scaleEffect(0.50)
+                                                    .frame(width: 9, height: 9)
+                                                Text("Retrying...")
+                                                    .font(.system(size: isMini ? 9 : (isSpacious ? 11 : 10), weight: .semibold, design: .rounded))
+                                                    .foregroundColor(state.hudAccentColor)
                                             } else {
-                                                Image(systemName: "exclamationmark.triangle.fill")
-                                                    .font(.system(size: isMini ? 7.5 : 8.5))
-                                                    .foregroundColor(.orange)
+                                                Image(systemName: "arrow.clockwise")
+                                                    .font(.system(size: isMini ? 8.5 : (isSpacious ? 10.5 : 9.5), weight: .bold))
+                                                    .foregroundColor(state.hudAccentColor)
                                                 Text("Retry")
-                                                    .font(.system(size: isMini ? 8.5 : (isSpacious ? 10.5 : 9.5), weight: .bold, design: .rounded))
-                                                    .foregroundColor(.orange)
+                                                    .font(.system(size: isMini ? 9 : (isSpacious ? 11 : 10), weight: .semibold, design: .rounded))
+                                                    .foregroundColor(isDark ? Color.white.opacity(0.95) : Color.black.opacity(0.9))
                                             }
                                         }
-                                        .padding(.horizontal, 5)
-                                        .padding(.vertical, 2.5)
-                                        .background(Color.orange.opacity(0.18))
-                                        .cornerRadius(4)
+                                        .padding(.horizontal, 4)
+                                        .contentShape(Rectangle())
                                     }
                                     .buttonStyle(.plain)
                                     .pointingHandCursor()
 
                                     if !state.isRetryingTranscription {
                                         Button(action: {
-                                            state.lastTranscriptionFailed = false
+                                            withAnimation(.spring(response: 0.24, dampingFraction: 0.75)) {
+                                                state.lastTranscriptionFailed = false
+                                            }
                                         }) {
                                             Image(systemName: "xmark")
-                                                .font(.system(size: 7, weight: .bold))
+                                                .font(.system(size: 7.5, weight: .semibold))
                                                 .foregroundColor(.secondary)
-                                                .frame(width: 12, height: 12)
-                                                .background(Color.primary.opacity(0.06))
-                                                .clipShape(Circle())
+                                                .frame(width: 14, height: 14)
+                                                .contentShape(Circle())
                                         }
                                         .buttonStyle(.plain)
                                         .pointingHandCursor()
+                                        .help("Dismiss")
                                     }
                                 }
-                                .padding(.horizontal, 4)
+                                .padding(.horizontal, 6)
                                 .transition(.asymmetric(
-                                    insertion: .scale(scale: 0.75).combined(with: .opacity),
-                                    removal: .scale(scale: 0.75).combined(with: .opacity)
+                                    insertion: .scale(scale: 0.85).combined(with: .opacity),
+                                    removal: .scale(scale: 0.85).combined(with: .opacity)
                                 ))
                             } else {
                                 if state.listeningStyle == "waveform" {
@@ -3692,10 +3696,10 @@ struct FloatingHUDView: View {
                     .animation(.spring(response: 0.22, dampingFraction: 0.75), value: state.isHUDHovered)
                     .animation(.spring(response: 0.36, dampingFraction: 0.80), value: state.isRecording)
                     .animation(.spring(response: 0.36, dampingFraction: 0.80), value: state.isProcessing)
-                    .animation(.spring(response: 0.28, dampingFraction: 0.72), value: state.isFlowActive)
-                    .animation(.spring(response: 0.28, dampingFraction: 0.72), value: state.isFlowPaused)
                     .scaleEffect(state.isHUDDragging ? 1.05 : 1.0)
                     .animation(.spring(response: 0.24, dampingFraction: 0.72), value: state.isHUDDragging)
+                    .animation(.spring(response: 0.32, dampingFraction: 0.76), value: state.lastTranscriptionFailed)
+                    .animation(.spring(response: 0.32, dampingFraction: 0.76), value: state.isRetryingTranscription)
                 }
                 .frame(width: isMini ? 96 : (isSpacious ? 136 : 112), height: isMini ? 44 : (isSpacious ? 62 : 52), alignment: .bottom)
                 .padding(.bottom, 4)
