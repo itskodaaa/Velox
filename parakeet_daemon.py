@@ -951,23 +951,33 @@ LOAD_TIME_S = 0.0
 
 def transcribe_with_groq(audio_path: str, groq_key: str, prompt: str = "", language: str = "en") -> tuple[str, float]:
     t0 = time.perf_counter()
-    with open(audio_path, "rb") as f:
-        files = {"file": (os.path.basename(audio_path), f, "audio/wav")}
-        data = {
-            "model": "whisper-large-v3",
-            "temperature": "0.0",
-            "response_format": "json",
-            "language": language or "en",
-        }
-        if prompt.strip():
-            data["prompt"] = prompt.strip()[:800]
-        resp = HTTP_CLIENT.post(
-            "https://api.groq.com/openai/v1/audio/transcriptions",
-            headers={"Authorization": f"Bearer {groq_key}"},
-            files=files,
-            data=data,
-            timeout=15.0
-        )
+    data = {
+        "model": "whisper-large-v3",
+        "temperature": "0.0",
+        "response_format": "json",
+        "language": language or "en",
+    }
+    if prompt.strip():
+        data["prompt"] = prompt.strip()[:800]
+
+    def _do_post(client: httpx.Client):
+        with open(audio_path, "rb") as f:
+            files = {"file": (os.path.basename(audio_path), f, "audio/wav")}
+            return client.post(
+                "https://api.groq.com/openai/v1/audio/transcriptions",
+                headers={"Authorization": f"Bearer {groq_key}"},
+                files=files,
+                data=data,
+                timeout=15.0
+            )
+
+    try:
+        resp = _do_post(HTTP_CLIENT)
+    except Exception as exc:
+        print(f"[transcribe_with_groq] Connection failed on shared client ({exc}). Attempting with clean fresh HTTP client...", flush=True)
+        with httpx.Client(timeout=15.0) as fresh_client:
+            resp = _do_post(fresh_client)
+
     latency_ms = round((time.perf_counter() - t0) * 1000, 1)
     if resp.status_code == 200:
         update_groq_limits_from_headers(resp.headers)
@@ -1122,16 +1132,14 @@ def inference_worker():
                 try:
                     raw_text, stt_ms = transcribe_with_groq(effective_audio_path, groq_key, prompt=prompt_str, language=language)
                 except Exception as e:
-                    # Retry once after brief pause
-                    print(f"[WhisperWorker] Groq STT initial error: {e}. Retrying...", flush=True)
-                    time.sleep(0.5)
+                    # Retry once after brief pause (fresh client bypasses stale socket/DNS resolution cache)
+                    print(f"[WhisperWorker] Groq STT initial error ({type(e).__name__}: {e}). Retrying with fresh client...", flush=True)
+                    time.sleep(0.6)
                     try:
                         raw_text, stt_ms = transcribe_with_groq(effective_audio_path, groq_key, prompt=prompt_str, language=language)
                     except Exception as e2:
-                        if force_local:
-                            use_groq = False
-                        else:
-                            raise RuntimeError(f"Groq Cloud STT failed: {e2}")
+                        print(f"[WhisperWorker] Groq Cloud unreachable ({e2}). Seamlessly falling back to local Metal GPU Whisper Large v3...", flush=True)
+                        use_groq = False
 
             if not use_groq:
                 stt_model_name = "Whisper Large v3 Turbo (MLX Metal GPU)"
