@@ -179,10 +179,15 @@ final class AppState: ObservableObject {
     // MARK: - Transcription History & Failure Retry
     @Published var historyItems: [TranscriptionHistoryItem] = []
     @Published var lastTranscriptionFailed: Bool = false
+    @Published var isRetryingTranscription: Bool = false
     @Published var lastFailedAudioPath: String = ""
     @Published var lastErrorReason: String = ""
     @Published var lastRawSpeechText: String = ""
     @Published var copiedItemId: String? = nil
+
+    // MARK: - Companion Sleep & Inactivity
+    @Published var isCompanionSleeping: Bool = false
+    var lastUserActivityTime: Double = ProcessInfo.processInfo.systemUptime
 
     // MARK: - Flow Mode Focus Timer
     @Published var isFlowActive: Bool = false
@@ -512,6 +517,7 @@ final class AppState: ObservableObject {
         }
         statusText = "Retrying transcription..."
         isProcessing = true
+        isRetryingTranscription = true
         lastTranscriptionFailed = false
         DictationService.shared.transcribeAndPaste(audioPath: path)
     }
@@ -1260,6 +1266,7 @@ final class DictationService {
         URLSession.shared.dataTask(with: req) { data, resp, err in
             DispatchQueue.main.async {
                 AppState.shared.isProcessing = false
+                AppState.shared.isRetryingTranscription = false
                 if let err = err {
                     print("[DictationService] Request error: \(err.localizedDescription)")
                     AppState.shared.lastTranscriptionFailed = true
@@ -1312,6 +1319,7 @@ final class DictationService {
                 }
 
                 AppState.shared.lastTranscriptionFailed = false
+                AppState.shared.isRetryingTranscription = false
                 AppState.shared.lastErrorReason = ""
                 AppState.shared.lastFailedAudioPath = ""
                 let totalMs = round(Date().timeIntervalSince(tStart) * 1000)
@@ -2015,6 +2023,7 @@ struct GearBotCharacterView: View {
     var isTimerUrgent: Bool = false
     var timerLookX: Double = 0.0
     var timerLookY: Double = 0.0
+    var isSleeping: Bool = false
 
     var body: some View {
         let isIdle = !isRecording && !isProcessing && !isDone && !isTyping && !isLookingAtTimer && !isCursorNear
@@ -2029,7 +2038,9 @@ struct GearBotCharacterView: View {
 
         // Head tilt: reacts dynamically to typing, timer look-at, cursor, or organic idle wandering
         let headTilt: Double = {
-            if isHappy {
+            if isSleeping {
+                return 4.5 + sin(time * 1.2) * 1.5 // Cozy sleeping tilt
+            } else if isHappy {
                 return sin(time * 18.0) * 5.5
             } else if isLookingAtTimer {
                 return timerLookX * 6.5 // Leans head toward the timer countdown!
@@ -2054,7 +2065,9 @@ struct GearBotCharacterView: View {
 
         // Head bob / vertical perk
         let headBob: CGFloat = {
-            if isHappy {
+            if isSleeping {
+                return CGFloat(1.2 + sin(time * 1.6) * 0.8) // Gentle rhythmic sleep breathing
+            } else if isHappy {
                 return -3.5 + CGFloat(abs(sin(time * 14.0))) * -2.0
             } else if isLookingAtTimer {
                 return CGFloat(-timerLookY * 1.5)
@@ -2079,7 +2092,9 @@ struct GearBotCharacterView: View {
 
         // Eye glance direction:
         let (eyeOffsetX, eyeOffsetY): (CGFloat, CGFloat) = {
-            if isHappy {
+            if isSleeping {
+                return (0.0, 1.0)
+            } else if isHappy {
                 return (0.0, 0.0)
             } else if isLookingAtTimer {
                 return (CGFloat(timerLookX * 1.7), CGFloat(-timerLookY * 1.0))
@@ -2098,20 +2113,22 @@ struct GearBotCharacterView: View {
         }()
 
         // Antenna bulb illumination & frequency:
-        let antennaBulbLit = isRecording || isProcessing || isHovered || isHappy || isTyping || isCursorNear || isTimerLow || (isIdle && idlePose.antennaBulbPulse)
+        let antennaBulbLit = !isSleeping && (isRecording || isProcessing || isHovered || isHappy || isTyping || isCursorNear || isTimerLow || (isIdle && idlePose.antennaBulbPulse))
         let antennaSpeed = isTimerUrgent ? 36.0 : (isTyping ? 24.0 : (idlePose.antennaBulbPulse ? 28.0 : 20.0))
 
         // Blinking:
         let blinkPhase = sin(time * 1.7)
-        let isBlinking = (blinkPhase > 0.96) && !isProcessing && !isDone && !isHappy && !isTimerUrgent
+        let isBlinking = isSleeping || ((blinkPhase > 0.96) && !isProcessing && !isDone && !isHappy && !isTimerUrgent)
 
         let leftEyeScaleY: CGFloat = {
+            if isSleeping { return 0.12 }
             if isBlinking { return 0.15 }
             if isTimerUrgent { return 1.25 }
             return 1.0
         }()
 
         let rightEyeScaleY: CGFloat = {
+            if isSleeping { return 0.12 }
             if isBlinking { return 0.15 }
             if isTimerUrgent { return 1.25 }
             return 1.0
@@ -2125,12 +2142,12 @@ struct GearBotCharacterView: View {
             } else {
                 VStack(spacing: 0) {
                     Circle()
-                        .fill(isTimerUrgent ? Color.red : (antennaBulbLit ? accentColor : Color.white.opacity(0.8)))
+                        .fill(isTimerUrgent ? Color.red : (antennaBulbLit ? accentColor : Color.white.opacity(isSleeping ? 0.35 : 0.8)))
                         .frame(width: 3.5, height: 3.5)
-                        .scaleEffect(isHappy || isTyping || isTimerUrgent ? (1.25 + sin(time * antennaSpeed) * 0.25) : (antennaBulbLit ? 1.2 : 1.0))
+                        .scaleEffect(isHappy || isTyping || isTimerUrgent ? (1.25 + sin(time * antennaSpeed) * 0.25) : (antennaBulbLit ? 1.2 : (isSleeping ? 0.85 : 1.0)))
                         .shadow(color: (isTimerUrgent ? Color.red : accentColor).opacity(antennaBulbLit ? 0.9 : 0.2), radius: antennaBulbLit ? 3.0 : 1)
                     Rectangle()
-                        .fill(Color.white.opacity(0.4))
+                        .fill(Color.white.opacity(isSleeping ? 0.25 : 0.4))
                         .frame(width: 1.5, height: 3.5)
                         .rotationEffect(.degrees(isLookingAtTimer ? timerLookX * 12.0 : (isCursorNear ? cursorLookX * 12.0 : 0)))
                 }
@@ -2192,6 +2209,16 @@ struct GearBotCharacterView: View {
                             .frame(width: 5.5, height: 5.5)
                             .rotationEffect(.degrees(-time * 360.0))
                     }
+                } else if isSleeping {
+                    // Sleeping Display (Closed horizontal slit eyes & floating micro Zzz)
+                    HStack(spacing: 4) {
+                        RoundedRectangle(cornerRadius: 0.5)
+                            .fill(Color.white.opacity(0.6))
+                            .frame(width: 3.5, height: 1.2)
+                        RoundedRectangle(cornerRadius: 0.5)
+                            .fill(Color.white.opacity(0.6))
+                            .frame(width: 3.5, height: 1.2)
+                    }
                 } else {
                     HStack(spacing: 4) {
                         // Left Eye
@@ -2230,8 +2257,14 @@ struct GearBotCharacterView: View {
                     }
                 }
 
-                // Nervous sweat or urgent sprint indicator
-                if isTimerUrgent {
+                if isSleeping {
+                    // Floating Zzz particle
+                    Text("z")
+                        .font(.system(size: 6.5, weight: .bold, design: .rounded))
+                        .foregroundColor(accentColor.opacity(0.85))
+                        .offset(x: 10 + sin(time * 2.0) * 1.5, y: -7 - abs(sin(time * 1.5)) * 3.5)
+                        .opacity(0.4 + abs(sin(time * 1.5)) * 0.6)
+                } else if isTimerUrgent {
                     Text("⚡")
                         .font(.system(size: 6))
                         .offset(x: 9, y: -7 + sin(time * 8.0) * 1.2)
@@ -2271,6 +2304,7 @@ struct NekoCharacterView: View {
     var isTimerUrgent: Bool = false
     var timerLookX: Double = 0.0
     var timerLookY: Double = 0.0
+    var isSleeping: Bool = false
 
     var body: some View {
         let isIdle = !isRecording && !isProcessing && !isDone && !isTyping && !isLookingAtTimer && !isCursorNear
@@ -2283,11 +2317,13 @@ struct NekoCharacterView: View {
             isTyping: isTyping
         )
         let blinkPhase = sin(time * 1.6)
-        let isBlinking = blinkPhase > 0.96 && !isProcessing && !isDone && !isHappy && !isTimerUrgent
+        let isBlinking = isSleeping || (blinkPhase > 0.96 && !isProcessing && !isDone && !isHappy && !isTimerUrgent)
 
         // Ear twitches:
         let leftEarTwitch: Double = {
-            if isHappy {
+            if isSleeping {
+                return -3.0 + sin(time * 1.5) * 1.5 // Relaxed folded sleeping ear
+            } else if isHappy {
                 return sin(time * 16.0) * 10.0
             } else if isLookingAtTimer {
                 return timerLookX * 4.0
@@ -2306,7 +2342,9 @@ struct NekoCharacterView: View {
         }()
 
         let rightEarTwitch: Double = {
-            if isHappy {
+            if isSleeping {
+                return 3.0 - sin(time * 1.5) * 1.5
+            } else if isHappy {
                 return -sin(time * 16.0) * 10.0
             } else if isLookingAtTimer {
                 return timerLookX * 12.0 // Right ear pointed toward timer!
@@ -2325,7 +2363,9 @@ struct NekoCharacterView: View {
         }()
 
         let headTilt: Double = {
-            if isHappy {
+            if isSleeping {
+                return 4.0 + sin(time * 1.2) * 1.2 // Gentle snoozing head tilt
+            } else if isHappy {
                 return sin(time * 16.0) * 6.0
             } else if isLookingAtTimer {
                 return timerLookX * 7.0 // Head turns toward timer!
@@ -2342,7 +2382,9 @@ struct NekoCharacterView: View {
         }()
 
         let bob: CGFloat = {
-            if isHappy {
+            if isSleeping {
+                return CGFloat(1.0 + sin(time * 1.5) * 0.7) // Rhythmic sleeping chest bob
+            } else if isHappy {
                 return -2.5 + CGFloat(abs(sin(time * 14.0))) * -1.5
             } else if isLookingAtTimer {
                 return CGFloat(-timerLookY * 1.5)
@@ -2363,7 +2405,9 @@ struct NekoCharacterView: View {
         }()
 
         let (eyeOffsetX, eyeOffsetY): (CGFloat, CGFloat) = {
-            if isHappy {
+            if isSleeping {
+                return (0.0, 1.0)
+            } else if isHappy {
                 return (0.0, 0.0)
             } else if isLookingAtTimer {
                 return (CGFloat(timerLookX * 1.8), CGFloat(-timerLookY * 1.1))
@@ -2391,7 +2435,7 @@ struct NekoCharacterView: View {
                         p.addLine(to: CGPoint(x: 6.5, y: 6.5))
                         p.closeSubpath()
                     }
-                    .fill(accentColor.opacity(0.95))
+                    .fill(accentColor.opacity(isSleeping ? 0.55 : 0.95))
                     .frame(width: 6.5, height: 6.5)
                     .rotationEffect(.degrees(leftEarTwitch))
 
@@ -2401,7 +2445,7 @@ struct NekoCharacterView: View {
                         p.addLine(to: CGPoint(x: 6.5, y: 6.5))
                         p.closeSubpath()
                     }
-                    .fill(accentColor.opacity(0.95))
+                    .fill(accentColor.opacity(isSleeping ? 0.55 : 0.95))
                     .frame(width: 6.5, height: 6.5)
                     .rotationEffect(.degrees(rightEarTwitch))
                 }
@@ -2440,6 +2484,17 @@ struct NekoCharacterView: View {
                         Circle().fill(accentColor).frame(width: 2.5, height: 2.5)
                         Circle().fill(accentColor).frame(width: 2.5, height: 2.5)
                     }
+                } else if isSleeping {
+                    // Closed sleepy curved eyes
+                    HStack(spacing: 4) {
+                        Text("~")
+                            .font(.system(size: 7.5, weight: .black))
+                            .foregroundColor(accentColor.opacity(0.75))
+                        Text("~")
+                            .font(.system(size: 7.5, weight: .black))
+                            .foregroundColor(accentColor.opacity(0.75))
+                    }
+                    .offset(y: 0.5)
                 } else {
                     VStack(spacing: 1) {
                         HStack(spacing: 4) {
@@ -2487,7 +2542,14 @@ struct NekoCharacterView: View {
                     }
                 }
 
-                if isTimerUrgent {
+                if isSleeping {
+                    // Floating Zzz particle
+                    Text("z")
+                        .font(.system(size: 6.5, weight: .bold, design: .rounded))
+                        .foregroundColor(accentColor.opacity(0.85))
+                        .offset(x: 9 + sin(time * 2.0) * 1.5, y: -7 - abs(sin(time * 1.5)) * 3.5)
+                        .opacity(0.4 + abs(sin(time * 1.5)) * 0.6)
+                } else if isTimerUrgent {
                     Text("⚡")
                         .font(.system(size: 6))
                         .offset(x: 8, y: -7 + sin(time * 8.0) * 1.2)
@@ -2529,6 +2591,7 @@ struct BongoCatCharacterView: View {
     var isTimerUrgent: Bool = false
     var timerLookX: Double = 0.0
     var timerLookY: Double = 0.0
+    var isSleeping: Bool = false
 
     var body: some View {
         let isIdle = !isRecording && !isProcessing && !isDone && !isTyping && !isLookingAtTimer && !isCursorNear
@@ -2541,12 +2604,14 @@ struct BongoCatCharacterView: View {
             isTyping: isTyping
         )
         let blinkPhase = sin(time * 1.6)
-        let isBlinking = blinkPhase > 0.95 && !isProcessing && !isDone && !isHappy && !isTimerUrgent
+        let isBlinking = isSleeping || (blinkPhase > 0.95 && !isProcessing && !isDone && !isHappy && !isTimerUrgent)
 
         // Paw tapping alternating frequency:
         let pawTapCycle = sin(time * 24.0)
         let leftPawY: CGFloat = {
-            if isHappy {
+            if isSleeping {
+                return 1.2 + sin(time * 1.5) * 0.4 // Resting folded paws
+            } else if isHappy {
                 return -3.0
             } else if isRecording {
                 return -4.0 // Raised cheering paws!
@@ -2561,7 +2626,9 @@ struct BongoCatCharacterView: View {
         }()
 
         let rightPawY: CGFloat = {
-            if isHappy {
+            if isSleeping {
+                return 1.2 + sin(time * 1.5) * 0.4
+            } else if isHappy {
                 return -3.0
             } else if isRecording {
                 return -4.0
@@ -2576,7 +2643,9 @@ struct BongoCatCharacterView: View {
         }()
 
         let headBob: CGFloat = {
-            if isHappy {
+            if isSleeping {
+                return CGFloat(1.0 + sin(time * 1.5) * 0.75) // Gentle sleeping breath
+            } else if isHappy {
                 return -2.5 + CGFloat(abs(sin(time * 14.0))) * -1.8
             } else if isTyping {
                 return CGFloat(sin(time * 24.0) * 0.8) // Cute subtle head groove to typing rhythm!
@@ -2591,7 +2660,9 @@ struct BongoCatCharacterView: View {
         }()
 
         let headTilt: Double = {
-            if isHappy {
+            if isSleeping {
+                return 4.5 + sin(time * 1.2) * 1.2 // Snoozing tilt
+            } else if isHappy {
                 return sin(time * 14.0) * 6.0
             } else if isLookingAtTimer {
                 return timerLookX * 6.0
@@ -2606,7 +2677,9 @@ struct BongoCatCharacterView: View {
         }()
 
         let (eyeOffsetX, eyeOffsetY): (CGFloat, CGFloat) = {
-            if isHappy {
+            if isSleeping {
+                return (0.0, 1.0)
+            } else if isHappy {
                 return (0.0, 0.0)
             } else if isLookingAtTimer {
                 return (CGFloat(timerLookX * 1.8), CGFloat(-timerLookY * 1.1))
@@ -2623,8 +2696,8 @@ struct BongoCatCharacterView: View {
             return (0.0, 0.0)
         }()
 
-        let leftEarTwitch: Double = isCursorNear ? trackingPose.earTwitchLeft * 0.7 : (isIdle ? idlePose.earTwitchLeft * 0.7 : 0.0)
-        let rightEarTwitch: Double = isCursorNear ? trackingPose.earTwitchRight * 0.7 : (isIdle ? idlePose.earTwitchRight * 0.7 : 0.0)
+        let leftEarTwitch: Double = isSleeping ? -2.5 : (isCursorNear ? trackingPose.earTwitchLeft * 0.7 : (isIdle ? idlePose.earTwitchLeft * 0.7 : 0.0))
+        let rightEarTwitch: Double = isSleeping ? 2.5 : (isCursorNear ? trackingPose.earTwitchRight * 0.7 : (isIdle ? idlePose.earTwitchRight * 0.7 : 0.0))
 
         VStack(spacing: -3.5) {
             // Cat Ears with pink insides
@@ -2702,6 +2775,28 @@ struct BongoCatCharacterView: View {
                         Circle().fill(Color.black.opacity(0.8)).frame(width: 2.5, height: 2.5)
                             .scaleEffect(0.6 + max(0, sin(time * 6.0 + 1.0)) * 0.6)
                     }
+                } else if isSleeping {
+                    // Closed sleepy curved eyes & snout
+                    VStack(spacing: 0.5) {
+                        HStack(spacing: 4.5) {
+                            Text("-")
+                                .font(.system(size: 8.5, weight: .black))
+                                .foregroundColor(Color.black.opacity(0.75))
+                            Text("-")
+                                .font(.system(size: 8.5, weight: .black))
+                                .foregroundColor(Color.black.opacity(0.75))
+                        }
+                        .offset(y: 0.5)
+
+                        HStack(spacing: 5) {
+                            Circle().fill(Color.pink.opacity(0.4)).frame(width: 2.0, height: 1.2)
+                            Text("w")
+                                .font(.system(size: 5.5, weight: .bold, design: .rounded))
+                                .foregroundColor(Color.black.opacity(0.75))
+                                .offset(y: -0.5)
+                            Circle().fill(Color.pink.opacity(0.4)).frame(width: 2.0, height: 1.2)
+                        }
+                    }
                 } else {
                     VStack(spacing: 0.5) {
                         HStack(spacing: 4.5) {
@@ -2750,7 +2845,14 @@ struct BongoCatCharacterView: View {
                     }
                 }
 
-                if isTimerUrgent {
+                if isSleeping {
+                    // Floating Zzz particle
+                    Text("z")
+                        .font(.system(size: 6.5, weight: .bold, design: .rounded))
+                        .foregroundColor(Color.black.opacity(0.75))
+                        .offset(x: 9 + sin(time * 2.0) * 1.5, y: -7 - abs(sin(time * 1.5)) * 3.5)
+                        .opacity(0.4 + abs(sin(time * 1.5)) * 0.6)
+                } else if isTimerUrgent {
                     Text("💧")
                         .font(.system(size: 5.5))
                         .offset(x: 9, y: -6 + sin(time * 8.0) * 1.0)
@@ -2871,7 +2973,8 @@ struct InteractiveCharacterView: View {
                     isTimerLow: isTimerLow,
                     isTimerUrgent: isTimerUrgent,
                     timerLookX: timerLookX,
-                    timerLookY: timerLookY
+                    timerLookY: timerLookY,
+                    isSleeping: state.isCompanionSleeping
                 )
             case "gearbot", "bot", "gear":
                 GearBotCharacterView(
@@ -2892,7 +2995,8 @@ struct InteractiveCharacterView: View {
                     isTimerLow: isTimerLow,
                     isTimerUrgent: isTimerUrgent,
                     timerLookX: timerLookX,
-                    timerLookY: timerLookY
+                    timerLookY: timerLookY,
+                    isSleeping: state.isCompanionSleeping
                 )
             default: // "bongo", "bongocat" & legacy aliases fallback to Bongo Cat
                 BongoCatCharacterView(
@@ -2913,7 +3017,8 @@ struct InteractiveCharacterView: View {
                     isTimerLow: isTimerLow,
                     isTimerUrgent: isTimerUrgent,
                     timerLookX: timerLookX,
-                    timerLookY: timerLookY
+                    timerLookY: timerLookY,
+                    isSleeping: state.isCompanionSleeping
                 )
             }
         }
@@ -3235,8 +3340,12 @@ struct FloatingHUDView: View {
             } else if isVertical {
                 // VERTICAL CAPSULE FOR LEFT / RIGHT SCREEN EDGES
                 let isFlow = state.isFlowActive && !state.isRecording && !state.isProcessing
+                let isFailedOrRetrying = (state.lastTranscriptionFailed || state.isRetryingTranscription) && !state.isRecording
                 let pillWidth: CGFloat = isMini ? 24 : (isSpacious ? 32 : 28)
                 let pillHeight: CGFloat = {
+                    if isFailedOrRetrying {
+                        return isMini ? 58 : (isSpacious ? 82 : 70)
+                    }
                     if isFlow {
                         return isMini ? 66 : (isSpacious ? 92 : 78)
                     }
@@ -3325,6 +3434,56 @@ struct FloatingHUDView: View {
                                 insertion: .scale(scale: 0.75).combined(with: .opacity),
                                 removal: .scale(scale: 0.75).combined(with: .opacity)
                             ))
+                        } else if isFailedOrRetrying {
+                            // Vertical Failure / Retry
+                            VStack(spacing: 3) {
+                                Button(action: {
+                                    if !state.isRetryingTranscription {
+                                        state.retryLastFailedTranscription()
+                                    }
+                                }) {
+                                    VStack(spacing: 2) {
+                                        if state.isRetryingTranscription {
+                                            ProgressView()
+                                                .scaleEffect(0.48)
+                                                .frame(width: 8, height: 8)
+                                        } else {
+                                            Image(systemName: "arrow.clockwise")
+                                                .font(.system(size: 8, weight: .bold))
+                                                .foregroundColor(.orange)
+                                        }
+                                        Text(state.isRetryingTranscription ? "..." : "Retry")
+                                            .font(.system(size: 7.5, weight: .bold, design: .rounded))
+                                            .foregroundColor(.orange)
+                                    }
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 3)
+                                    .background(Color.orange.opacity(0.18))
+                                    .cornerRadius(4)
+                                }
+                                .buttonStyle(.plain)
+                                .pointingHandCursor()
+
+                                if !state.isRetryingTranscription {
+                                    Button(action: {
+                                        state.lastTranscriptionFailed = false
+                                    }) {
+                                        Image(systemName: "xmark")
+                                            .font(.system(size: 6.5, weight: .bold))
+                                            .foregroundColor(.secondary)
+                                            .frame(width: 12, height: 12)
+                                            .background(Color.primary.opacity(0.06))
+                                            .clipShape(Circle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .pointingHandCursor()
+                                }
+                            }
+                            .padding(.vertical, 3)
+                            .transition(.asymmetric(
+                                insertion: .scale(scale: 0.75).combined(with: .opacity),
+                                removal: .scale(scale: 0.75).combined(with: .opacity)
+                            ))
                         } else {
                             if state.listeningStyle == "waveform" {
                                 OrganicVoiceWaveform(state: state, time: time, isVertical: true)
@@ -3353,7 +3512,11 @@ struct FloatingHUDView: View {
             } else {
                 // HORIZONTAL CAPSULE FOR BOTTOM CENTER
                 let isFlow = state.isFlowActive && !state.isRecording && !state.isProcessing
+                let isFailedOrRetrying = (state.lastTranscriptionFailed || state.isRetryingTranscription) && !state.isRecording
                 let pillWidth: CGFloat = {
+                    if isFailedOrRetrying {
+                        return isMini ? 84 : (isSpacious ? 116 : 98)
+                    }
                     if isFlow {
                         return isMini ? 72 : (isSpacious ? 102 : 86)
                     }
@@ -3450,6 +3613,59 @@ struct FloatingHUDView: View {
                                         .scaleEffect(isUrgent ? (1.0 + sin(time * 8.0) * 0.06) : 1.0)
                                 }
                                 .padding(.horizontal, 6)
+                                .transition(.asymmetric(
+                                    insertion: .scale(scale: 0.75).combined(with: .opacity),
+                                    removal: .scale(scale: 0.75).combined(with: .opacity)
+                                ))
+                            } else if isFailedOrRetrying {
+                                // Transcription Failure & Inline Retry Pill Button
+                                HStack(spacing: 4) {
+                                    Button(action: {
+                                        if !state.isRetryingTranscription {
+                                            state.retryLastFailedTranscription()
+                                        }
+                                    }) {
+                                        HStack(spacing: 3) {
+                                            if state.isRetryingTranscription {
+                                                ProgressView()
+                                                    .scaleEffect(0.48)
+                                                    .frame(width: 8, height: 8)
+                                                Text("Retrying")
+                                                    .font(.system(size: isMini ? 8.5 : (isSpacious ? 10.5 : 9.5), weight: .bold, design: .rounded))
+                                                    .foregroundColor(.orange)
+                                            } else {
+                                                Image(systemName: "exclamationmark.triangle.fill")
+                                                    .font(.system(size: isMini ? 7.5 : 8.5))
+                                                    .foregroundColor(.orange)
+                                                Text("Retry")
+                                                    .font(.system(size: isMini ? 8.5 : (isSpacious ? 10.5 : 9.5), weight: .bold, design: .rounded))
+                                                    .foregroundColor(.orange)
+                                            }
+                                        }
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 2.5)
+                                        .background(Color.orange.opacity(0.18))
+                                        .cornerRadius(4)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .pointingHandCursor()
+
+                                    if !state.isRetryingTranscription {
+                                        Button(action: {
+                                            state.lastTranscriptionFailed = false
+                                        }) {
+                                            Image(systemName: "xmark")
+                                                .font(.system(size: 7, weight: .bold))
+                                                .foregroundColor(.secondary)
+                                                .frame(width: 12, height: 12)
+                                                .background(Color.primary.opacity(0.06))
+                                                .clipShape(Circle())
+                                        }
+                                        .buttonStyle(.plain)
+                                        .pointingHandCursor()
+                                    }
+                                }
+                                .padding(.horizontal, 4)
                                 .transition(.asymmetric(
                                     insertion: .scale(scale: 0.75).combined(with: .opacity),
                                     removal: .scale(scale: 0.75).combined(with: .opacity)
@@ -4157,7 +4373,7 @@ final class FloatingHUDController {
     }
 
     func hide() {
-        if AppState.shared.alwaysShowCompanion || AppState.shared.isFlowActive {
+        if AppState.shared.alwaysShowCompanion || AppState.shared.isFlowActive || AppState.shared.lastTranscriptionFailed || AppState.shared.isRetryingTranscription {
             return
         }
         panel?.orderOut(nil)
@@ -4300,6 +4516,7 @@ final class CompanionTrackerManager {
     private var lastMouseTime: Double = 0.0
     private var typingResetTimer: Timer?
     private var mouseIdleTimer: Timer?
+    private var sleepCheckTimer: Timer?
 
     private init() {}
 
@@ -4318,6 +4535,19 @@ final class CompanionTrackerManager {
             self?.handleKeyDown(event)
             return event
         }
+
+        // Periodic inactivity check: after 35s of inactivity, companion gently falls asleep
+        let scTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
+            let now = ProcessInfo.processInfo.systemUptime
+            let idleDuration = now - AppState.shared.lastUserActivityTime
+            if idleDuration >= 35.0 && !AppState.shared.isRecording && !AppState.shared.isProcessing {
+                if !AppState.shared.isCompanionSleeping {
+                    AppState.shared.isCompanionSleeping = true
+                }
+            }
+        }
+        RunLoop.main.add(scTimer, forMode: .common)
+        sleepCheckTimer = scTimer
 
         // 2. Global Monitors (system-wide when typing or navigating in other apps)
         guard AXIsProcessTrusted() else { return }
@@ -4353,10 +4583,14 @@ final class CompanionTrackerManager {
         typingResetTimer = nil
         mouseIdleTimer?.invalidate()
         mouseIdleTimer = nil
+        sleepCheckTimer?.invalidate()
+        sleepCheckTimer = nil
     }
 
     private func handleMouseMoved(_ event: NSEvent) {
         let now = ProcessInfo.processInfo.systemUptime
+        AppState.shared.lastUserActivityTime = now
+
         // Strict rate-limiting to ~35Hz to protect battery & prevent lag
         guard (now - lastMouseTime) >= 0.028 else { return }
         lastMouseTime = now
@@ -4386,12 +4620,13 @@ final class CompanionTrackerManager {
 
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
-                let wasNear = AppState.shared.isCursorNear
-                if !wasNear {
-                    // Pet woke up from idle: trigger wake focus snap & curious shake!
+                
+                // Wake animation triggers ONLY if the character was actually sleeping!
+                if AppState.shared.isCompanionSleeping {
+                    AppState.shared.isCompanionSleeping = false
                     AppState.shared.cursorWakeTime = now
-                    AppState.shared.isCursorNear = true
                 }
+                AppState.shared.isCursorNear = true
                 AppState.shared.cursorLookX = normalizedX
                 AppState.shared.cursorLookY = normalizedY
 
@@ -4426,6 +4661,11 @@ final class CompanionTrackerManager {
 
     private func handleKeyDown(_ event: NSEvent) {
         let now = ProcessInfo.processInfo.systemUptime
+        AppState.shared.lastUserActivityTime = now
+        if AppState.shared.isCompanionSleeping {
+            AppState.shared.isCompanionSleeping = false
+        }
+
         // Throttle key update dispatches to main thread to 20Hz (every 50ms) so typing never freezes or lags!
         guard (now - lastKeyHandledTime) >= 0.050 else {
             AppState.shared.lastTypingTime = now
@@ -4769,13 +5009,23 @@ struct DictateTabPane: View {
                     Spacer()
 
                     Button(action: {
-                        state.retryLastFailedTranscription()
+                        if !state.isRetryingTranscription {
+                            state.retryLastFailedTranscription()
+                        }
                     }) {
                         HStack(spacing: 3) {
-                            Image(systemName: "arrow.clockwise")
-                                .font(.system(size: 8, weight: .bold))
-                            Text("Retry")
-                                .font(.system(size: 8.5, weight: .bold))
+                            if state.isRetryingTranscription {
+                                ProgressView()
+                                    .scaleEffect(0.55)
+                                    .frame(width: 9, height: 9)
+                                Text("Retrying...")
+                                    .font(.system(size: 8.5, weight: .bold))
+                            } else {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 8, weight: .bold))
+                                Text("Retry")
+                                    .font(.system(size: 8.5, weight: .bold))
+                            }
                         }
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3.5)
@@ -5237,13 +5487,23 @@ struct HistoryTabPane: View {
                     Spacer()
 
                     Button(action: {
-                        state.retryLastFailedTranscription()
+                        if !state.isRetryingTranscription {
+                            state.retryLastFailedTranscription()
+                        }
                     }) {
                         HStack(spacing: 3) {
-                            Image(systemName: "arrow.clockwise")
-                                .font(.system(size: 7.5, weight: .bold))
-                            Text("Retry")
-                                .font(.system(size: 8.5, weight: .bold))
+                            if state.isRetryingTranscription {
+                                ProgressView()
+                                    .scaleEffect(0.5)
+                                    .frame(width: 8, height: 8)
+                                Text("Retrying...")
+                                    .font(.system(size: 8.5, weight: .bold))
+                            } else {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 7.5, weight: .bold))
+                                Text("Retry")
+                                    .font(.system(size: 8.5, weight: .bold))
+                            }
                         }
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
