@@ -4618,6 +4618,37 @@ final class CompanionTrackerManager {
     }
 }
 
+// MARK: - Pointing Hand Cursor Modifier
+struct PointingHandModifier: ViewModifier {
+    @State private var isHovered = false
+
+    func body(content: Content) -> some View {
+        content
+            .onHover { inside in
+                if inside != isHovered {
+                    isHovered = inside
+                    if inside {
+                        NSCursor.pointingHand.push()
+                    } else {
+                        NSCursor.pop()
+                    }
+                }
+            }
+            .onDisappear {
+                if isHovered {
+                    NSCursor.pop()
+                    isHovered = false
+                }
+            }
+    }
+}
+
+extension View {
+    func pointingHandCursor() -> some View {
+        self.modifier(PointingHandModifier())
+    }
+}
+
 // MARK: - Ultra-Clean Two-Pane Menu Bar Control Center
 struct MenuBarControlCenterView: View {
     @ObservedObject var state = AppState.shared
@@ -4687,9 +4718,11 @@ struct MenuBarControlCenterView: View {
                     .padding(.vertical, 3)
                     .background(isDark ? Color.white.opacity(0.06) : Color.black.opacity(0.05))
                     .cornerRadius(8)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .focusable(false)
+                .pointingHandCursor()
                 .help("Theme: Click to toggle Auto / Dark / Light")
 
                 // Status Indicator at bottom of sidebar
@@ -4754,30 +4787,69 @@ struct SidebarTabButton: View {
     var isDark: Bool = true
     let action: () -> Void
 
+    @State private var isHovered: Bool = false
+
     var isSelected: Bool { tab == current }
+
+    private var iconColor: Color {
+        if isSelected { return AppState.shared.hudAccentColor }
+        let alpha = isHovered ? 0.9 : 0.45
+        return isDark ? Color.white.opacity(alpha) : Color.black.opacity(alpha)
+    }
+
+    private var textColor: Color {
+        if isSelected { return isDark ? .white : .black }
+        let alpha = isHovered ? 0.9 : 0.55
+        return isDark ? Color.white.opacity(alpha) : Color.black.opacity(alpha)
+    }
+
+    private var backgroundColor: Color {
+        if isSelected {
+            return isDark ? Color.white.opacity(0.12) : Color.black.opacity(0.09)
+        }
+        if isHovered {
+            return isDark ? Color.white.opacity(0.06) : Color.black.opacity(0.04)
+        }
+        return Color.clear
+    }
+
+    private var borderColor: Color {
+        if isSelected {
+            return isDark ? Color.white.opacity(0.14) : Color.black.opacity(0.11)
+        }
+        if isHovered {
+            return isDark ? Color.white.opacity(0.08) : Color.black.opacity(0.06)
+        }
+        return Color.clear
+    }
 
     var body: some View {
         Button(action: action) {
             VStack(spacing: 3) {
                 Image(systemName: tab.icon)
                     .font(.system(size: 12.5, weight: isSelected ? .bold : .regular))
-                    .foregroundColor(isSelected ? AppState.shared.hudAccentColor : (isDark ? Color.white.opacity(0.45) : Color.black.opacity(0.45)))
+                    .foregroundColor(iconColor)
                 Text(tab.rawValue)
                     .font(.system(size: 8.5, weight: isSelected ? .bold : .medium))
-                    .foregroundColor(isSelected ? (isDark ? .white : .black) : (isDark ? Color.white.opacity(0.55) : Color.black.opacity(0.55)))
+                    .foregroundColor(textColor)
             }
             .frame(width: 68, height: 39)
             .background(
                 RoundedRectangle(cornerRadius: 7)
-                    .fill(isSelected ? (isDark ? Color.white.opacity(0.09) : Color.black.opacity(0.07)) : Color.clear)
+                    .fill(backgroundColor)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 7)
-                    .strokeBorder(isSelected ? (isDark ? Color.white.opacity(0.12) : Color.black.opacity(0.09)) : Color.clear, lineWidth: 0.8)
+                    .strokeBorder(borderColor, lineWidth: 0.8)
             )
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .focusable(false)
+        .pointingHandCursor()
+        .onHover { h in
+            isHovered = h
+        }
     }
 }
 
@@ -4880,6 +4952,7 @@ struct DictateTabPane: View {
                         .cornerRadius(4)
                     }
                     .buttonStyle(.plain)
+                    .pointingHandCursor()
 
                     if !state.lastRawSpeechText.isEmpty {
                         Button(action: {
@@ -4893,6 +4966,7 @@ struct DictateTabPane: View {
                                 .cornerRadius(4)
                         }
                         .buttonStyle(.plain)
+                        .pointingHandCursor()
                         .help("Copy detected raw speech")
                     }
 
@@ -4905,6 +4979,7 @@ struct DictateTabPane: View {
                             .padding(3)
                     }
                     .buttonStyle(.plain)
+                    .pointingHandCursor()
                 }
                 .padding(7)
                 .background(Color.orange.opacity(0.09))
@@ -4938,6 +5013,7 @@ struct DictateTabPane: View {
                     }
                 }
                 .buttonStyle(.plain)
+                .pointingHandCursor()
 
                 Text(state.isRecording ? "Click to Stop & Paste" : "Press ⌥ Space to Dictate")
                     .font(.system(size: 11, weight: .medium, design: .rounded))
@@ -4986,6 +5062,7 @@ struct DictateTabPane: View {
                     .cornerRadius(4)
                 }
                 .menuStyle(.borderlessButton)
+                .pointingHandCursor()
             }
 
             Spacer(minLength: 0)
@@ -5010,8 +5087,10 @@ struct DictateTabPane: View {
                         .padding(.vertical, 5)
                         .background((!state.useLlmPolish || state.provider == "local_rules") ? Color.primary.opacity(0.12) : Color.clear)
                         .cornerRadius(5)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .pointingHandCursor()
 
                     Button(action: {
                         state.useLlmPolish = true
@@ -5030,8 +5109,10 @@ struct DictateTabPane: View {
                         .padding(.vertical, 5)
                         .background((state.useLlmPolish && state.provider != "local_rules") ? Color.primary.opacity(0.12) : Color.clear)
                         .cornerRadius(5)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .pointingHandCursor()
                 }
                 .padding(2)
                 .background(Color.primary.opacity(0.04))
@@ -5117,8 +5198,10 @@ struct DictateTabPane: View {
                         .background(state.hudAccentColor.opacity(0.12))
                         .foregroundColor(state.hudAccentColor)
                         .cornerRadius(4)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .pointingHandCursor()
                     .help("Add custom words and tech terms in Preferences")
                 }
                 .padding(.horizontal, 6)
@@ -5155,8 +5238,10 @@ struct DictateTabPane: View {
                         .padding(.vertical, 2)
                         .background(Color.primary.opacity(0.08))
                         .cornerRadius(4)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .pointingHandCursor()
                     .help("Copy previous dictation to clipboard")
                 }
                 .padding(.horizontal, 7)
@@ -5237,6 +5322,7 @@ struct HistoryTabPane: View {
                             .padding(4)
                     }
                     .buttonStyle(.plain)
+                    .pointingHandCursor()
                     .help("Reload history")
 
                     // Clear All Button
@@ -5253,6 +5339,7 @@ struct HistoryTabPane: View {
                             .background(Color.red.opacity(0.12))
                             .cornerRadius(4)
                             .buttonStyle(.plain)
+                            .pointingHandCursor()
                         } else {
                             Button(action: {
                                 showClearConfirm = true
@@ -5266,6 +5353,7 @@ struct HistoryTabPane: View {
                                     .padding(4)
                             }
                             .buttonStyle(.plain)
+                            .pointingHandCursor()
                             .help("Clear all history")
                         }
                     }
@@ -5289,6 +5377,7 @@ struct HistoryTabPane: View {
                             .foregroundColor(.secondary)
                     }
                     .buttonStyle(.plain)
+                    .pointingHandCursor()
                 }
             }
             .padding(.horizontal, 7)
@@ -5331,6 +5420,7 @@ struct HistoryTabPane: View {
                         .cornerRadius(4)
                     }
                     .buttonStyle(.plain)
+                    .pointingHandCursor()
 
                     if !state.lastRawSpeechText.isEmpty {
                         Button(action: {
@@ -5344,6 +5434,7 @@ struct HistoryTabPane: View {
                                 .cornerRadius(4)
                         }
                         .buttonStyle(.plain)
+                        .pointingHandCursor()
                         .help("Copy detected raw speech")
                     }
 
@@ -5356,6 +5447,7 @@ struct HistoryTabPane: View {
                             .padding(2)
                     }
                     .buttonStyle(.plain)
+                    .pointingHandCursor()
                 }
                 .padding(6)
                 .background(Color.orange.opacity(0.09))
@@ -5446,6 +5538,7 @@ struct HistoryCardView: View {
                     .cornerRadius(4)
                 }
                 .buttonStyle(.plain)
+                .pointingHandCursor()
                 .help("Copy full text to clipboard")
 
                 // Delete Item Button
@@ -5458,6 +5551,7 @@ struct HistoryCardView: View {
                         .padding(3)
                 }
                 .buttonStyle(.plain)
+                .pointingHandCursor()
                 .help("Delete transcript")
             }
 
@@ -5514,6 +5608,7 @@ struct HistoryCardView: View {
                             .foregroundColor(state.hudAccentColor)
                     }
                     .buttonStyle(.plain)
+                    .pointingHandCursor()
                 }
             }
         }
@@ -6751,6 +6846,19 @@ struct SettingsTabPane: View {
     }
 }
 
+// MARK: - First Mouse Responsive Hosting Support
+class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        return true
+    }
+}
+
+class FirstMouseHostingController<Content: View>: NSHostingController<Content> {
+    override func loadView() {
+        self.view = FirstMouseHostingView(rootView: rootView)
+    }
+}
+
 // MARK: - App Delegate
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static var shared: AppDelegate!
@@ -6772,7 +6880,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let p = NSPopover()
         p.contentSize = NSSize(width: 420, height: 410)
         p.behavior = .transient
-        p.contentViewController = NSHostingController(rootView: MenuBarControlCenterView())
+        p.contentViewController = FirstMouseHostingController(rootView: MenuBarControlCenterView())
         self.popover = p
 
         AppState.shared.loadConfigFromDisk()
@@ -6793,7 +6901,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppState.shared.refreshPermissions()
         AppState.shared.refreshAudioDevices()
         if !popover.isShown {
+            NSApp.activate(ignoringOtherApps: true)
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            popover.contentViewController?.view.window?.makeKey()
         }
     }
 
@@ -6803,7 +6913,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if popover.isShown {
             popover.performClose(sender)
         } else {
+            NSApp.activate(ignoringOtherApps: true)
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            popover.contentViewController?.view.window?.makeKey()
         }
     }
 
