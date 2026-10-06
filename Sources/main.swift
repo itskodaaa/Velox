@@ -301,7 +301,7 @@ final class AppState: ObservableObject {
     // HUD Customization
     @AppStorage("hud_position") var hudPosition: String = "bottom_center" // "bottom_left", "bottom_center", "bottom_right"
     @AppStorage("hud_size") var hudSize: String = "compact"         // "mini", "compact", "spacious"
-    @AppStorage("hud_character") var hudCharacter: String = "axolotl" // "axolotl", "bongo", "neko", "kuro", "gearbot", "custom"
+    @AppStorage("hud_character") var hudCharacter: String = "bongo" // "bongo", "neko", "gearbot"
     @AppStorage("hud_color") var hudColor: String = "amber"         // "amber", "rose", "emerald", "cyan", "purple", "monochrome"
     @AppStorage("hud_always_show") var alwaysShowCompanion: Bool = true // Desktop pet companion mode
     @AppStorage("hud_y_offset") var hudYOffset: Double = 0.0        // User nudge from dock/bottom
@@ -419,12 +419,15 @@ final class AppState: ObservableObject {
         }
         if let hsize = json["hud_size"] as? String, !hsize.isEmpty { self.hudSize = hsize }
         if let hchar = json["hud_character"] as? String, !hchar.isEmpty {
-            if hchar == "birb" || hchar == "parakeet" || hchar == "luna" {
-                self.hudCharacter = "axolotl"
-            } else if hchar == "orb_gears" || hchar == "orb" {
+            let lower = hchar.lowercased()
+            if lower == "axolotl" || lower == "kuro" || lower == "luna" || lower == "birb" || lower == "parakeet" || lower == "fox" {
                 self.hudCharacter = "bongo"
+            } else if lower.contains("bongo") {
+                self.hudCharacter = "bongo"
+            } else if lower.contains("neko") || lower == "cat" {
+                self.hudCharacter = "neko"
             } else {
-                self.hudCharacter = hchar
+                self.hudCharacter = "gearbot"
             }
         }
         if let hcol = json["hud_color"] as? String, !hcol.isEmpty { self.hudColor = hcol }
@@ -1658,10 +1661,10 @@ struct GearBotCharacterView: View {
     var timerLookY: Double = 0.0
 
     var body: some View {
-        let isIdle = !isRecording && !isProcessing && !isDone
-        let cycle = isIdle ? time.truncatingRemainder(dividingBy: 18.0) : 0.0
+        let isIdle = !isRecording && !isProcessing && !isDone && !isTyping && !isLookingAtTimer && !isCursorNear
+        let cycle = time.truncatingRemainder(dividingBy: 22.0)
 
-        // Head tilt: reacts dynamically to typing, timer look-at, cursor, or idle
+        // Head tilt: reacts dynamically to typing, timer look-at, cursor, or organic idle wandering
         let headTilt: Double = {
             if isHappy {
                 return sin(time * 18.0) * 5.5
@@ -1679,14 +1682,35 @@ struct GearBotCharacterView: View {
                 return Double(audioLevel) * 7.0 - 3.5
             } else if isHovered {
                 return 4.0
-            } else {
-                if cycle >= 5.5 && cycle < 8.5 {
-                    return 7.0
-                } else if cycle >= 8.5 && cycle < 12.0 {
-                    return -6.0
+            } else if isIdle {
+                // Organic 22-second multi-phase idle animation cycle:
+                if cycle < 3.2 {
+                    // Phase 1: Relaxed neutral breathing
+                    return sin(time * 1.5) * 1.2
+                } else if cycle < 6.4 {
+                    // Phase 2: Curious glance to the LEFT
+                    return -6.5 + sin(time * 2.5) * 1.0
+                } else if cycle < 8.6 {
+                    // Phase 3: Centered micro-bob
+                    return sin(time * 2.0) * 0.8
+                } else if cycle < 12.0 {
+                    // Phase 4: Curious inspection to the RIGHT
+                    return 6.0 + sin(time * 2.5) * 1.0
+                } else if cycle < 14.5 {
+                    // Phase 5: Downward inspection (neutral tilt)
+                    return 0.5
+                } else if cycle < 18.0 {
+                    // Phase 6: Daydream head tilt wandering
+                    return sin(time * 1.8) * 4.8
+                } else if cycle < 20.0 {
+                    // Phase 7: Alert perk to upper-right
+                    return 5.2
                 } else {
-                    return sin(time * 0.9) * 1.5
+                    // Phase 8: Smooth settle back to center
+                    return sin(time * 1.2) * 1.0
                 }
+            } else {
+                return sin(time * 0.9) * 1.5
             }
         }()
 
@@ -1708,6 +1732,13 @@ struct GearBotCharacterView: View {
                 return -CGFloat(audioLevel) * 2.5
             } else if isHovered {
                 return -1.6
+            } else if isIdle {
+                if cycle >= 12.0 && cycle < 14.5 {
+                    return 1.2 // Dip head down to inspect desk
+                } else if cycle >= 18.0 && cycle < 20.0 {
+                    return -1.8 // Perk up alertly
+                }
+                return CGFloat(sin(time * 2.0) * 0.8) // Organic breathing bob
             } else {
                 return CGFloat(sin(time * 1.8) * 0.5)
             }
@@ -1728,18 +1759,37 @@ struct GearBotCharacterView: View {
             } else if isHovered {
                 return (0.0, -0.6)
             } else if isIdle {
-                if cycle >= 5.5 && cycle < 8.5 {
-                    return (1.2, -0.8)
-                } else if cycle >= 8.5 && cycle < 12.0 {
-                    return (-1.2, -0.8)
+                // Organic wandering gaze:
+                if cycle < 3.2 {
+                    return (0.0, 0.0)
+                } else if cycle < 6.4 {
+                    // Look LEFT with slight upward curiosity
+                    return (-1.4, -0.2)
+                } else if cycle < 8.6 {
+                    return (0.0, 0.0)
+                } else if cycle < 12.0 {
+                    // Look RIGHT
+                    return (1.4, -0.3)
+                } else if cycle < 14.5 {
+                    // Inspect DOWN at desk/gears
+                    return (0.0, 1.2)
+                } else if cycle < 18.0 {
+                    // Daydream wander arc
+                    return (CGFloat(sin(time * 2.2) * 1.2), CGFloat(-cos(time * 1.8) * 0.8))
+                } else if cycle < 20.0 {
+                    // Quick alert glance upper-right
+                    return (1.3, -1.0)
+                } else {
+                    return (0.0, 0.0)
                 }
             }
             return (0.0, 0.0)
         }()
 
         // Antenna bulb illumination & frequency:
-        let antennaBulbLit = isRecording || isProcessing || isHovered || isHappy || isTyping || isCursorNear || isTimerLow
-        let antennaSpeed = isTimerUrgent ? 36.0 : (isTyping ? 24.0 : 20.0)
+        let isIdleTwitch = isIdle && (cycle >= 18.0 && cycle < 20.0)
+        let antennaBulbLit = isRecording || isProcessing || isHovered || isHappy || isTyping || isCursorNear || isTimerLow || isIdleTwitch
+        let antennaSpeed = isTimerUrgent ? 36.0 : (isTyping ? 24.0 : (isIdleTwitch ? 28.0 : 20.0))
 
         // Blinking:
         let blinkPhase = sin(time * 1.7)
@@ -1912,6 +1962,8 @@ struct NekoCharacterView: View {
     var timerLookY: Double = 0.0
 
     var body: some View {
+        let isIdle = !isRecording && !isProcessing && !isDone && !isTyping && !isLookingAtTimer && !isCursorNear
+        let cycle = time.truncatingRemainder(dividingBy: 22.0)
         let blinkPhase = sin(time * 1.6)
         let isBlinking = blinkPhase > 0.96 && !isProcessing && !isDone && !isHappy && !isTimerUrgent
 
@@ -1929,6 +1981,17 @@ struct NekoCharacterView: View {
                 return cursorLookX * 8.0 - 2.0
             } else if isRecording {
                 return Double(audioLevel) * 9.0
+            } else if isIdle {
+                if cycle >= 3.2 && cycle < 6.4 {
+                    // Perked ear toward left glance
+                    return 8.0 + sin(time * 8.0) * 4.0
+                } else if cycle >= 8.6 && cycle < 12.0 {
+                    return -4.0
+                } else if cycle >= 18.0 && cycle < 20.0 {
+                    // Alert double-take ear flutter
+                    return sin(time * 18.0) * 8.0
+                }
+                return sin(time * 1.8) * 1.5
             }
             return 0.0
         }()
@@ -1946,6 +2009,17 @@ struct NekoCharacterView: View {
                 return cursorLookX * 8.0 + 2.0
             } else if isRecording {
                 return -Double(audioLevel) * 9.0
+            } else if isIdle {
+                if cycle >= 3.2 && cycle < 6.4 {
+                    return -3.0
+                } else if cycle >= 8.6 && cycle < 12.0 {
+                    // Perked ear toward right glance
+                    return 9.0 + sin(time * 8.0) * 4.0
+                } else if cycle >= 18.0 && cycle < 20.0 {
+                    // Alert perk
+                    return -sin(time * 18.0) * 8.0
+                }
+                return -sin(time * 1.8) * 1.5
             }
             return 0.0
         }()
@@ -1961,6 +2035,30 @@ struct NekoCharacterView: View {
                 return sin(time * 24.0) * (isTimerUrgent ? 1.5 : 0.8) // Nervous timer jitter
             } else if isCursorNear {
                 return cursorLookX * 6.0
+            } else if isIdle {
+                if cycle < 3.2 {
+                    // Neutral soft breathing
+                    return sin(time * 1.5) * 1.2
+                } else if cycle < 6.4 {
+                    // Look LEFT with curious cat head tilt
+                    return -6.5 + sin(time * 2.5) * 1.0
+                } else if cycle < 8.6 {
+                    return sin(time * 2.0) * 0.8
+                } else if cycle < 12.0 {
+                    // Look RIGHT with inquisitive head tilt
+                    return 6.0 + sin(time * 2.5) * 1.0
+                } else if cycle < 14.5 {
+                    // Head straight down inspecting paws
+                    return 0.0
+                } else if cycle < 18.0 {
+                    // Dreamy wandering tilt
+                    return sin(time * 1.6) * 4.5
+                } else if cycle < 20.0 {
+                    // Sudden curious double-take
+                    return 5.5
+                } else {
+                    return sin(time * 1.2) * 1.0
+                }
             }
             return 0.0
         }()
@@ -1978,6 +2076,13 @@ struct NekoCharacterView: View {
                 return CGFloat(sin(time * 24.0) * 0.5)
             } else if isHovered {
                 return -1.0
+            } else if isIdle {
+                if cycle >= 12.0 && cycle < 14.5 {
+                    return 1.4 // Soft head-dip down inspecting paws
+                } else if cycle >= 18.0 && cycle < 20.0 {
+                    return -1.8 // Alert perk up
+                }
+                return CGFloat(sin(time * 2.0) * 0.8) // Gentle purring / breathing bob
             }
             return 0.0
         }()
@@ -1993,6 +2098,29 @@ struct NekoCharacterView: View {
                 return (CGFloat(sin(time * 8.0) * 1.5), 0.0)
             } else if isCursorNear {
                 return (CGFloat(cursorLookX * 1.8), CGFloat(-cursorLookY * 1.1))
+            } else if isIdle {
+                if cycle < 3.2 {
+                    return (0.0, 0.0)
+                } else if cycle < 6.4 {
+                    // Look LEFT
+                    return (-1.4, -0.2)
+                } else if cycle < 8.6 {
+                    return (0.0, 0.0)
+                } else if cycle < 12.0 {
+                    // Look RIGHT
+                    return (1.4, -0.3)
+                } else if cycle < 14.5 {
+                    // Look DOWN at paws/desk
+                    return (0.0, 1.25)
+                } else if cycle < 18.0 {
+                    // Soft daydream wandering arc
+                    return (CGFloat(sin(time * 2.0) * 1.2), CGFloat(-cos(time * 1.6) * 0.7))
+                } else if cycle < 20.0 {
+                    // Upper-right glance
+                    return (1.3, -1.0)
+                } else {
+                    return (0.0, 0.0)
+                }
             }
             return (0.0, 0.0)
         }()
@@ -2446,6 +2574,8 @@ struct BongoCatCharacterView: View {
     var timerLookY: Double = 0.0
 
     var body: some View {
+        let isIdle = !isRecording && !isProcessing && !isDone && !isTyping && !isLookingAtTimer && !isCursorNear
+        let cycle = time.truncatingRemainder(dividingBy: 22.0)
         let blinkPhase = sin(time * 1.6)
         let isBlinking = blinkPhase > 0.95 && !isProcessing && !isDone && !isHappy && !isTimerUrgent
 
@@ -2458,6 +2588,15 @@ struct BongoCatCharacterView: View {
                 return -4.0 // Raised cheering paws!
             } else if isTyping {
                 return pawTapCycle > 0 ? 2.5 : -1.5 // Alternating tap!
+            } else if isIdle {
+                // Playful idle micro-paw twitch or stretch
+                if cycle >= 12.0 && cycle < 14.5 {
+                    // Resting paws closer on desk inspection
+                    return 1.0
+                } else if cycle >= 18.0 && cycle < 20.0 {
+                    // Tiny eager left paw lift
+                    return -1.8
+                }
             }
             return 0.0
         }()
@@ -2469,6 +2608,10 @@ struct BongoCatCharacterView: View {
                 return -4.0
             } else if isTyping {
                 return pawTapCycle <= 0 ? 2.5 : -1.5 // Opposite tap!
+            } else if isIdle {
+                if cycle >= 12.0 && cycle < 14.5 {
+                    return 1.0
+                }
             }
             return 0.0
         }()
@@ -2480,6 +2623,13 @@ struct BongoCatCharacterView: View {
                 return CGFloat(sin(time * 24.0) * 0.8) // Cute subtle head groove to typing rhythm!
             } else if isTimerUrgent {
                 return -1.5 + CGFloat(abs(sin(time * 18.0))) * -1.5
+            } else if isIdle {
+                if cycle >= 12.0 && cycle < 14.5 {
+                    return 1.4 // Curious desk inspection dip
+                } else if cycle >= 18.0 && cycle < 20.0 {
+                    return -1.8 // Alert perk up
+                }
+                return CGFloat(sin(time * 2.0) * 0.9) // Soft breathing bob
             }
             return CGFloat(sin(time * 2.0) * 1.0)
         }()
@@ -2493,6 +2643,30 @@ struct BongoCatCharacterView: View {
                 return -2.5 + sin(time * 6.0) * 1.5
             } else if isCursorNear {
                 return cursorLookX * 6.0
+            } else if isIdle {
+                if cycle < 3.2 {
+                    // Relaxed neutral breathing
+                    return sin(time * 1.5) * 1.2
+                } else if cycle < 6.4 {
+                    // Curious glance to the LEFT
+                    return -6.5 + sin(time * 2.5) * 1.0
+                } else if cycle < 8.6 {
+                    return sin(time * 2.0) * 0.8
+                } else if cycle < 12.0 {
+                    // Inquisitive look to the RIGHT
+                    return 6.0 + sin(time * 2.5) * 1.0
+                } else if cycle < 14.5 {
+                    // Head straight down inspecting desk
+                    return 0.0
+                } else if cycle < 18.0 {
+                    // Daydream wander tilt
+                    return sin(time * 1.6) * 4.5
+                } else if cycle < 20.0 {
+                    // Quick alert perk
+                    return 5.5
+                } else {
+                    return sin(time * 1.2) * 1.0
+                }
             }
             return 0.0
         }()
@@ -2509,9 +2683,35 @@ struct BongoCatCharacterView: View {
                 return (CGFloat(sin(time * 8.0) * 1.4), 0.0)
             } else if isCursorNear {
                 return (CGFloat(cursorLookX * 1.8), CGFloat(-cursorLookY * 1.1))
+            } else if isIdle {
+                if cycle < 3.2 {
+                    return (0.0, 0.0)
+                } else if cycle < 6.4 {
+                    // Look LEFT
+                    return (-1.4, -0.2)
+                } else if cycle < 8.6 {
+                    return (0.0, 0.0)
+                } else if cycle < 12.0 {
+                    // Look RIGHT
+                    return (1.4, -0.3)
+                } else if cycle < 14.5 {
+                    // Inspect DOWN at desk/paws
+                    return (0.0, 1.25)
+                } else if cycle < 18.0 {
+                    // Daydream wander arc
+                    return (CGFloat(sin(time * 2.0) * 1.2), CGFloat(-cos(time * 1.6) * 0.7))
+                } else if cycle < 20.0 {
+                    // Upper-right alert glance
+                    return (1.3, -1.0)
+                } else {
+                    return (0.0, 0.0)
+                }
             }
             return (0.0, 0.0)
         }()
+
+        let leftEarTwitch: Double = isIdle && (cycle >= 18.0 && cycle < 20.0) ? sin(time * 18.0) * 4.0 : 0.0
+        let rightEarTwitch: Double = isIdle && (cycle >= 8.6 && cycle < 12.0) ? sin(time * 8.0) * 3.0 : 0.0
 
         VStack(spacing: -3.5) {
             // Cat Ears with pink insides
@@ -2536,7 +2736,7 @@ struct BongoCatCharacterView: View {
                     .fill(Color(red: 1.0, green: 0.72, blue: 0.78))
                     .frame(width: 7, height: 7)
                 }
-                .rotationEffect(.degrees(-10 + (isTyping ? sin(time * 14.0) * 3 : 0)))
+                .rotationEffect(.degrees(-10 + (isTyping ? sin(time * 14.0) * 3 : leftEarTwitch)))
 
                 // Right Ear
                 ZStack {
@@ -2558,7 +2758,7 @@ struct BongoCatCharacterView: View {
                     .fill(Color(red: 1.0, green: 0.72, blue: 0.78))
                     .frame(width: 7, height: 7)
                 }
-                .rotationEffect(.degrees(10 - (isTyping ? sin(time * 14.0) * 3 : 0)))
+                .rotationEffect(.degrees(10 - (isTyping ? sin(time * 14.0) * 3 : -rightEarTwitch)))
             }
 
             // Head & Face Body
@@ -2988,95 +3188,28 @@ struct InteractiveCharacterView: View {
                     timerLookX: timerLookX,
                     timerLookY: timerLookY
                 )
-            case "axolotl", "luna", "spirit", "ghost", "birb":
-                AxolotlCharacterView(
-                    time: time,
-                    isRecording: state.isRecording,
-                    isProcessing: state.isProcessing,
-                    isDone: isDone,
-                    audioLevel: state.audioLevel,
-                    accentColor: state.hudAccentColor,
-                    isHovered: state.isHUDHovered,
-                    isHappy: state.isPetHappy,
-                    cursorLookX: state.cursorLookX,
-                    cursorLookY: state.cursorLookY,
-                    isCursorNear: state.isCursorNear,
-                    isTyping: isTyping,
-                    isLookingAtTimer: isLookingAtTimer,
-                    isTimerLow: isTimerLow,
-                    isTimerUrgent: isTimerUrgent,
-                    timerLookX: timerLookX,
-                    timerLookY: timerLookY
-                )
-            case "bongo", "bongocat", "cat_bongo":
-                BongoCatCharacterView(
-                    time: time,
-                    isRecording: state.isRecording,
-                    isProcessing: state.isProcessing,
-                    isDone: isDone,
-                    audioLevel: state.audioLevel,
-                    accentColor: state.hudAccentColor,
-                    isHovered: state.isHUDHovered,
-                    isHappy: state.isPetHappy,
-                    cursorLookX: state.cursorLookX,
-                    cursorLookY: state.cursorLookY,
-                    isCursorNear: state.isCursorNear,
-                    isTyping: isTyping,
-                    isLookingAtTimer: isLookingAtTimer,
-                    isTimerLow: isTimerLow,
-                    isTimerUrgent: isTimerUrgent,
-                    timerLookX: timerLookX,
-                    timerLookY: timerLookY
-                )
-            case "kuro", "fox", "orb_gears":
-                KuroCharacterView(
-                    time: time,
-                    isRecording: state.isRecording,
-                    isProcessing: state.isProcessing,
-                    isDone: isDone,
-                    audioLevel: state.audioLevel,
-                    accentColor: state.hudAccentColor,
-                    isHovered: state.isHUDHovered,
-                    isHappy: state.isPetHappy,
-                    cursorLookX: state.cursorLookX,
-                    cursorLookY: state.cursorLookY,
-                    isCursorNear: state.isCursorNear,
-                    isTyping: isTyping,
-                    isLookingAtTimer: isLookingAtTimer,
-                    isTimerLow: isTimerLow,
-                    isTimerUrgent: isTimerUrgent,
-                    timerLookX: timerLookX,
-                    timerLookY: timerLookY
-                )
-            case "custom":
-                let customPath = FileManager.default.homeDirectoryForCurrentUser
-                    .appendingPathComponent(".parakeetflow/character.gif").path
-                if FileManager.default.fileExists(atPath: customPath) {
-                    CustomGIFCharacterView(gifPath: customPath)
-                        .frame(width: 26, height: 26)
-                } else {
-                    GearBotCharacterView(
-                        time: time,
-                        isRecording: state.isRecording,
-                        isProcessing: state.isProcessing,
-                        isDone: isDone,
-                        audioLevel: state.audioLevel,
-                        accentColor: state.hudAccentColor,
-                        isHovered: state.isHUDHovered,
-                        isHappy: state.isPetHappy,
-                        cursorLookX: state.cursorLookX,
-                        cursorLookY: state.cursorLookY,
-                        isCursorNear: state.isCursorNear,
-                        isTyping: isTyping,
-                        isLookingAtTimer: isLookingAtTimer,
-                        isTimerLow: isTimerLow,
-                        isTimerUrgent: isTimerUrgent,
-                        timerLookX: timerLookX,
-                        timerLookY: timerLookY
-                    )
-                }
-            default: // "gearbot"
+            case "gearbot", "bot", "gear":
                 GearBotCharacterView(
+                    time: time,
+                    isRecording: state.isRecording,
+                    isProcessing: state.isProcessing,
+                    isDone: isDone,
+                    audioLevel: state.audioLevel,
+                    accentColor: state.hudAccentColor,
+                    isHovered: state.isHUDHovered,
+                    isHappy: state.isPetHappy,
+                    cursorLookX: state.cursorLookX,
+                    cursorLookY: state.cursorLookY,
+                    isCursorNear: state.isCursorNear,
+                    isTyping: isTyping,
+                    isLookingAtTimer: isLookingAtTimer,
+                    isTimerLow: isTimerLow,
+                    isTimerUrgent: isTimerUrgent,
+                    timerLookX: timerLookX,
+                    timerLookY: timerLookY
+                )
+            default: // "bongo", "bongocat" & legacy aliases fallback to Bongo Cat
+                BongoCatCharacterView(
                     time: time,
                     isRecording: state.isRecording,
                     isProcessing: state.isProcessing,
@@ -3929,10 +4062,8 @@ final class FloatingHUDController {
         // 3. Companion Mascot Submenu (Character Emojis Preserved!)
         let mascotMenu = NSMenu()
         let bots: [(id: String, name: String)] = [
-            ("axolotl", "🫧 Axolotl (Voice Gills)"),
             ("bongo", "🐾 Bongo Cat (Typing Paws)"),
             ("neko", "🐱 Neko (Cozy Cat)"),
-            ("kuro", "🦊 Kuro (Clever Fox)"),
             ("gearbot", "🤖 GearBot (Curious Bot)")
         ]
         for bot in bots {
@@ -5799,36 +5930,6 @@ struct CompanionPreviewRouter: View {
 
     var body: some View {
         switch id {
-        case "axolotl":
-            AxolotlCharacterView(
-                time: time,
-                isRecording: false,
-                isProcessing: false,
-                isDone: isHovered,
-                audioLevel: isHovered ? 0.75 : Float(max(0, sin(time * 3.0) * 0.28)),
-                accentColor: accentColor,
-                isHovered: isHovered,
-                isHappy: isHovered,
-                cursorLookX: cursorLookX,
-                cursorLookY: cursorLookY,
-                isCursorNear: isCursorNear,
-                isTyping: false
-            )
-        case "bongo":
-            BongoCatCharacterView(
-                time: time,
-                isRecording: false,
-                isProcessing: false,
-                isDone: isHovered,
-                audioLevel: 0.0,
-                accentColor: accentColor,
-                isHovered: isHovered,
-                isHappy: isHovered,
-                cursorLookX: cursorLookX,
-                cursorLookY: cursorLookY,
-                isCursorNear: isCursorNear,
-                isTyping: isHovered
-            )
         case "neko":
             NekoCharacterView(
                 time: time,
@@ -5844,22 +5945,7 @@ struct CompanionPreviewRouter: View {
                 isCursorNear: isCursorNear,
                 isTyping: false
             )
-        case "kuro":
-            KuroCharacterView(
-                time: time,
-                isRecording: false,
-                isProcessing: false,
-                isDone: isHovered,
-                audioLevel: 0.0,
-                accentColor: accentColor,
-                isHovered: isHovered,
-                isHappy: isHovered,
-                cursorLookX: cursorLookX,
-                cursorLookY: cursorLookY,
-                isCursorNear: isCursorNear,
-                isTyping: false
-            )
-        default: // gearbot
+        case "gearbot":
             GearBotCharacterView(
                 time: time,
                 isRecording: false,
@@ -5874,6 +5960,21 @@ struct CompanionPreviewRouter: View {
                 isCursorNear: isCursorNear,
                 isTyping: false
             )
+        default: // bongo
+            BongoCatCharacterView(
+                time: time,
+                isRecording: false,
+                isProcessing: false,
+                isDone: isHovered,
+                audioLevel: 0.0,
+                accentColor: accentColor,
+                isHovered: isHovered,
+                isHappy: isHovered,
+                cursorLookX: cursorLookX,
+                cursorLookY: cursorLookY,
+                isCursorNear: isCursorNear,
+                isTyping: isHovered
+            )
         }
     }
 }
@@ -5886,10 +5987,8 @@ struct CompanionTabPane: View {
     @State private var isMouseInShowcase: Bool = false
 
     let mascots: [(id: String, name: String, tag: String)] = [
-        ("axolotl", "Axolotl", "Voice Gills"),
         ("bongo", "Bongo Cat", "Typing Paws"),
         ("neko", "Neko", "Cozy Cat"),
-        ("kuro", "Kuro", "Shadow Fox"),
         ("gearbot", "GearBot", "Curious Bot")
     ]
 
@@ -5923,24 +6022,24 @@ struct CompanionTabPane: View {
                     .cornerRadius(6)
                 }
 
-                // 1. Live Interactive 5-Mascot Showcase
+                // 1. Live Interactive 3-Mascot Showcase
                 VStack(alignment: .leading, spacing: 6) {
                     Text("ACTIVE MASCOT")
                         .font(.system(size: 7.5, weight: .bold, design: .rounded))
                         .foregroundColor(.secondary.opacity(0.8))
                         .tracking(0.8)
 
-                    HStack(spacing: 5) {
+                    HStack(spacing: 8) {
                         ForEach(Array(mascots.enumerated()), id: \.element.id) { index, mascot in
                             let isSelected = state.hudCharacter.lowercased() == mascot.id.lowercased()
                             let isHovered = hoveredMascot == mascot.id
 
-                            let cardCenterX = CGFloat(index) * 63.0 + 30.0
+                            let cardCenterX = CGFloat(index) * 105.0 + 52.0
                             let dx = galleryMouseLocation.x - cardCenterX
                             let dy = galleryMouseLocation.y - 45.0
-                            let cardLookX = max(-1.0, min(1.0, Double(dx / 40.0)))
-                            let cardLookY = max(-1.0, min(1.0, Double(-dy / 35.0)))
-                            let isNearCard = isMouseInShowcase && (abs(dx) < 65.0 && abs(dy) < 55.0)
+                            let cardLookX = max(-1.0, min(1.0, Double(dx / 50.0)))
+                            let cardLookY = max(-1.0, min(1.0, Double(-dy / 40.0)))
+                            let isNearCard = isMouseInShowcase && (abs(dx) < 70.0 && abs(dy) < 55.0)
 
                             Button(action: {
                                 state.hudCharacter = mascot.id
@@ -5948,7 +6047,7 @@ struct CompanionTabPane: View {
                                 FloatingHUDController.shared.show()
                                 NSSound(named: "Tink")?.play()
                             }) {
-                                VStack(spacing: 4) {
+                                VStack(spacing: 5) {
                                     // Animated vector character preview
                                     ZStack {
                                         CompanionPreviewRouter(
@@ -5961,17 +6060,17 @@ struct CompanionTabPane: View {
                                             isCursorNear: isNearCard || isHovered
                                         )
                                     }
-                                    .frame(width: 32, height: 30)
+                                    .frame(width: 34, height: 32)
 
                                     // Mascot Name & Subtitle
-                                    VStack(spacing: 1) {
+                                    VStack(spacing: 1.5) {
                                         Text(mascot.name)
-                                            .font(.system(size: 8.5, weight: isSelected ? .bold : .medium, design: .rounded))
+                                            .font(.system(size: 9.5, weight: isSelected ? .bold : .medium, design: .rounded))
                                             .foregroundColor(isSelected ? .primary : .secondary)
                                             .lineLimit(1)
 
                                         Text(mascot.tag)
-                                            .font(.system(size: 7, weight: .regular))
+                                            .font(.system(size: 7.5, weight: .regular))
                                             .foregroundColor(.secondary.opacity(0.7))
                                             .lineLimit(1)
                                     }
@@ -6079,11 +6178,9 @@ struct CompanionTabPane: View {
 
     private func mascotDisplayName(_ id: String) -> String {
         switch id.lowercased() {
-        case "axolotl", "luna", "spirit", "ghost": return "🫧 Axolotl"
-        case "bongo", "bongocat": return "🐾 Bongo Cat"
         case "neko", "cat": return "🐱 Neko"
-        case "kuro", "fox": return "🦊 Kuro"
-        default: return "🤖 GearBot"
+        case "gearbot", "bot", "gear": return "🤖 GearBot"
+        default: return "🐾 Bongo Cat"
         }
     }
 }
