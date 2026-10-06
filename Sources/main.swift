@@ -1639,6 +1639,229 @@ struct InterlockingGearsView: View {
     }
 }
 
+// MARK: - Companion Organic Motion Engine (Cubic Bézier Smoothing & Kinematics)
+struct CompanionMotionEngine {
+    /// Evaluates a 1D cubic Bézier curve defined by control points (p1, p2) with p0 = 0 and p3 = 1
+    /// Solves for t given x via Newton-Raphson iteration, then evaluates y(t).
+    static func cubicBezier(p1x: Double, p1y: Double, p2x: Double, p2y: Double, progress: Double) -> Double {
+        let x = max(0.0, min(1.0, progress))
+        if x <= 0.0 { return 0.0 }
+        if x >= 1.0 { return 1.0 }
+
+        // Newton-Raphson to solve for parameter t where B_x(t) == x
+        var t = x
+        for _ in 0..<6 {
+            let oneMinusT = 1.0 - t
+            let currentX = 3.0 * oneMinusT * oneMinusT * t * p1x +
+                           3.0 * oneMinusT * t * t * p2x +
+                           t * t * t
+            let dx = 3.0 * oneMinusT * oneMinusT * p1x +
+                     6.0 * oneMinusT * t * (p2x - p1x) +
+                     3.0 * t * t * (1.0 - p2x)
+            let error = currentX - x
+            if abs(error) < 1e-4 || abs(dx) < 1e-5 { break }
+            t -= error / dx
+            t = max(0.0, min(1.0, t))
+        }
+
+        // Evaluate B_y(t)
+        let oneMinusT = 1.0 - t
+        return 3.0 * oneMinusT * oneMinusT * t * p1y +
+               3.0 * oneMinusT * t * t * p2y +
+               t * t * t
+    }
+
+    /// High-precision smooth transition between two values using custom Bézier curves
+    static func easeInOutCubic(_ t: Double) -> Double {
+        return cubicBezier(p1x: 0.42, p1y: 0.0, p2x: 0.58, p2y: 1.0, progress: t)
+    }
+
+    /// Organic elastic anticipatory curve for curious glances (subtle overshoot and settling)
+    static func easeOutBack(_ t: Double, overshoot: Double = 1.25) -> Double {
+        let clamped = max(0.0, min(1.0, t))
+        let c1 = overshoot
+        let c3 = c1 + 1.0
+        let inv = clamped - 1.0
+        return 1.0 + c3 * pow(inv, 3) + c1 * pow(inv, 2)
+    }
+
+    /// Smooth sine-based blend
+    static func smoothStep(_ t: Double) -> Double {
+        let c = max(0.0, min(1.0, t))
+        return c * c * (3.0 - 2.0 * c)
+    }
+
+    struct IdlePose {
+        var lookX: Double
+        var lookY: Double
+        var headTilt: Double
+        var headBob: Double
+        var earTwitchLeft: Double
+        var earTwitchRight: Double
+        var pawLeftY: Double
+        var pawRightY: Double
+        var antennaBulbPulse: Bool
+    }
+
+    /// Computes continuous, bezier-interpolated idle kinematics over a 22-second organic loop
+    static func sampleIdleKinematics(time: Double) -> IdlePose {
+        let cycle = time.truncatingRemainder(dividingBy: 22.0)
+
+        // Micro organic breathing/purring vibration (layered on top)
+        let microBreathingBob = sin(time * 2.2) * 0.55
+        let microBreathingTilt = sin(time * 1.4) * 0.75
+
+        // Defined keyframe segments:
+        // Segment 1 (0.0s - 3.2s): Neutral relax / calm breathing
+        // Segment 2 (3.2s - 4.2s transition -> 4.2s - 6.2s hold): Curious glance LEFT (-1.4, -0.2), tilt -6.0 deg
+        // Segment 3 (6.2s - 7.2s transition -> 7.2s - 8.6s hold): Return center with micro-blink
+        // Segment 4 (8.6s - 9.8s transition -> 9.8s - 12.0s hold): Inquisitive inspection RIGHT (+1.4, -0.3), tilt +6.0 deg
+        // Segment 5 (12.0s - 13.0s transition -> 13.0s - 14.8s hold): Curious inspection DOWN at desk/paws (0.0, +1.25), bob dip +1.4
+        // Segment 6 (14.8s - 18.0s): Smooth wandering daydream arc (lissajous curve)
+        // Segment 7 (18.0s - 18.8s transition -> 18.8s - 20.0s hold): Alert double-take glance (+1.3, -1.0) with ear perk
+        // Segment 8 (20.0s - 22.0s): Smooth settle back to center
+
+        var lookX: Double = 0.0
+        var lookY: Double = 0.0
+        var headTilt: Double = microBreathingTilt
+        var headBob: Double = microBreathingBob
+        var earTwitchLeft: Double = 0.0
+        var earTwitchRight: Double = 0.0
+        var pawLeftY: Double = 0.0
+        var pawRightY: Double = 0.0
+        var antennaBulbPulse: Bool = false
+
+        if cycle < 3.2 {
+            // Segment 1: Relaxed Neutral
+            lookX = 0.0
+            lookY = 0.0
+            headTilt = microBreathingTilt
+            headBob = microBreathingBob
+        } else if cycle < 4.2 {
+            // Segment 2 Transition: Smooth Bézier ease-in-out towards LEFT
+            let t = (cycle - 3.2) / 1.0
+            let ease = easeInOutCubic(t)
+            lookX = 0.0 + ease * -1.4
+            lookY = 0.0 + ease * -0.2
+            headTilt = microBreathingTilt + ease * -6.5
+            earTwitchLeft = ease * 7.5
+        } else if cycle < 6.2 {
+            // Segment 2 Hold: Looking LEFT, subtle breathing
+            lookX = -1.4 + sin(time * 3.0) * 0.08
+            lookY = -0.2
+            headTilt = -6.5 + microBreathingTilt * 0.5
+            headBob = microBreathingBob * 0.8
+            earTwitchLeft = 7.5 + sin(time * 6.0) * 1.5
+        } else if cycle < 7.2 {
+            // Segment 3 Transition: Smooth Bézier return to CENTER
+            let t = (cycle - 6.2) / 1.0
+            let ease = easeInOutCubic(t)
+            lookX = -1.4 * (1.0 - ease)
+            lookY = -0.2 * (1.0 - ease)
+            headTilt = -6.5 * (1.0 - ease) + microBreathingTilt
+            earTwitchLeft = 7.5 * (1.0 - ease)
+        } else if cycle < 8.6 {
+            // Segment 3 Hold: Neutral center with micro bob
+            lookX = 0.0
+            lookY = 0.0
+            headTilt = microBreathingTilt
+            headBob = microBreathingBob
+        } else if cycle < 9.8 {
+            // Segment 4 Transition: Elastic / Bézier glance to the RIGHT
+            let t = (cycle - 8.6) / 1.2
+            let ease = easeOutBack(t, overshoot: 1.15)
+            lookX = ease * 1.4
+            lookY = ease * -0.3
+            headTilt = microBreathingTilt + ease * 6.0
+            earTwitchRight = ease * 8.5
+        } else if cycle < 12.0 {
+            // Segment 4 Hold: Looking RIGHT
+            lookX = 1.4 + sin(time * 3.0) * 0.06
+            lookY = -0.3
+            headTilt = 6.0 + microBreathingTilt * 0.5
+            headBob = microBreathingBob * 0.8
+            earTwitchRight = 8.5 + sin(time * 6.0) * 1.5
+        } else if cycle < 13.0 {
+            // Segment 5 Transition: Turn from RIGHT to inspect DOWN at desk
+            let t = (cycle - 12.0) / 1.0
+            let ease = easeInOutCubic(t)
+            lookX = 1.4 * (1.0 - ease)
+            lookY = -0.3 * (1.0 - ease) + ease * 1.25
+            headTilt = 6.0 * (1.0 - ease)
+            headBob = microBreathingBob + ease * 1.4
+            pawLeftY = ease * 1.0
+            pawRightY = ease * 1.0
+            earTwitchRight = 8.5 * (1.0 - ease)
+        } else if cycle < 14.8 {
+            // Segment 5 Hold: Inspecting DOWN at paws/desk
+            lookX = 0.0
+            lookY = 1.25
+            headTilt = microBreathingTilt * 0.3
+            headBob = 1.4 + sin(time * 3.0) * 0.4
+            pawLeftY = 1.0
+            pawRightY = 1.0
+        } else if cycle < 18.0 {
+            // Segment 6: Fluid Daydream Lissajous Wandering Arc
+            let t = (cycle - 14.8) / 3.2
+            let blendIn = smoothStep(min(1.0, t * 2.5))
+            let wanderX = sin(time * 1.8) * 1.25
+            let wanderY = -cos(time * 1.4) * 0.75
+            lookX = blendIn * wanderX
+            lookY = (1.0 - blendIn) * 1.25 + blendIn * wanderY
+            headTilt = microBreathingTilt + sin(time * 1.6) * 4.5 * blendIn
+            headBob = (1.0 - blendIn) * 1.4 + microBreathingBob
+            pawLeftY = (1.0 - blendIn) * 1.0
+            pawRightY = (1.0 - blendIn) * 1.0
+        } else if cycle < 18.8 {
+            // Segment 7 Transition: Sudden alert perk up to UPPER RIGHT
+            let t = (cycle - 18.0) / 0.8
+            let ease = easeOutBack(t, overshoot: 1.28)
+            lookX = ease * 1.3
+            lookY = ease * -1.0
+            headTilt = microBreathingTilt + ease * 5.5
+            headBob = microBreathingBob - ease * 1.8
+            earTwitchLeft = sin(time * 18.0) * 7.0 * ease
+            earTwitchRight = -sin(time * 18.0) * 7.0 * ease
+            pawLeftY = -ease * 1.6
+            antennaBulbPulse = true
+        } else if cycle < 20.0 {
+            // Segment 7 Hold: Alert perk up
+            lookX = 1.3
+            lookY = -1.0
+            headTilt = 5.5 + microBreathingTilt * 0.4
+            headBob = -1.8 + sin(time * 4.0) * 0.3
+            earTwitchLeft = sin(time * 18.0) * 6.0
+            earTwitchRight = -sin(time * 18.0) * 6.0
+            pawLeftY = -1.6
+            antennaBulbPulse = true
+        } else {
+            // Segment 8: Smooth Bézier settle back to center neutral
+            let t = (cycle - 20.0) / 2.0
+            let ease = easeInOutCubic(t)
+            let inv = 1.0 - ease
+            lookX = 1.3 * inv
+            lookY = -1.0 * inv
+            headTilt = 5.5 * inv + microBreathingTilt
+            headBob = -1.8 * inv + microBreathingBob
+            earTwitchLeft = sin(time * 12.0) * 4.0 * inv
+            earTwitchRight = -sin(time * 12.0) * 4.0 * inv
+            pawLeftY = -1.6 * inv
+        }
+
+        return IdlePose(
+            lookX: lookX,
+            lookY: lookY,
+            headTilt: headTilt,
+            headBob: headBob,
+            earTwitchLeft: earTwitchLeft,
+            earTwitchRight: earTwitchRight,
+            pawLeftY: pawLeftY,
+            pawRightY: pawRightY,
+            antennaBulbPulse: antennaBulbPulse
+        )
+    }
+}
+
 // MARK: - 1. GearBot Character (Curious Cyber Inventor)
 struct GearBotCharacterView: View {
     let time: Double
@@ -1662,7 +1885,7 @@ struct GearBotCharacterView: View {
 
     var body: some View {
         let isIdle = !isRecording && !isProcessing && !isDone && !isTyping && !isLookingAtTimer && !isCursorNear
-        let cycle = time.truncatingRemainder(dividingBy: 22.0)
+        let idlePose = CompanionMotionEngine.sampleIdleKinematics(time: time)
 
         // Head tilt: reacts dynamically to typing, timer look-at, cursor, or organic idle wandering
         let headTilt: Double = {
@@ -1683,32 +1906,7 @@ struct GearBotCharacterView: View {
             } else if isHovered {
                 return 4.0
             } else if isIdle {
-                // Organic 22-second multi-phase idle animation cycle:
-                if cycle < 3.2 {
-                    // Phase 1: Relaxed neutral breathing
-                    return sin(time * 1.5) * 1.2
-                } else if cycle < 6.4 {
-                    // Phase 2: Curious glance to the LEFT
-                    return -6.5 + sin(time * 2.5) * 1.0
-                } else if cycle < 8.6 {
-                    // Phase 3: Centered micro-bob
-                    return sin(time * 2.0) * 0.8
-                } else if cycle < 12.0 {
-                    // Phase 4: Curious inspection to the RIGHT
-                    return 6.0 + sin(time * 2.5) * 1.0
-                } else if cycle < 14.5 {
-                    // Phase 5: Downward inspection (neutral tilt)
-                    return 0.5
-                } else if cycle < 18.0 {
-                    // Phase 6: Daydream head tilt wandering
-                    return sin(time * 1.8) * 4.8
-                } else if cycle < 20.0 {
-                    // Phase 7: Alert perk to upper-right
-                    return 5.2
-                } else {
-                    // Phase 8: Smooth settle back to center
-                    return sin(time * 1.2) * 1.0
-                }
+                return idlePose.headTilt
             } else {
                 return sin(time * 0.9) * 1.5
             }
@@ -1733,12 +1931,7 @@ struct GearBotCharacterView: View {
             } else if isHovered {
                 return -1.6
             } else if isIdle {
-                if cycle >= 12.0 && cycle < 14.5 {
-                    return 1.2 // Dip head down to inspect desk
-                } else if cycle >= 18.0 && cycle < 20.0 {
-                    return -1.8 // Perk up alertly
-                }
-                return CGFloat(sin(time * 2.0) * 0.8) // Organic breathing bob
+                return CGFloat(idlePose.headBob)
             } else {
                 return CGFloat(sin(time * 1.8) * 0.5)
             }
@@ -1759,37 +1952,14 @@ struct GearBotCharacterView: View {
             } else if isHovered {
                 return (0.0, -0.6)
             } else if isIdle {
-                // Organic wandering gaze:
-                if cycle < 3.2 {
-                    return (0.0, 0.0)
-                } else if cycle < 6.4 {
-                    // Look LEFT with slight upward curiosity
-                    return (-1.4, -0.2)
-                } else if cycle < 8.6 {
-                    return (0.0, 0.0)
-                } else if cycle < 12.0 {
-                    // Look RIGHT
-                    return (1.4, -0.3)
-                } else if cycle < 14.5 {
-                    // Inspect DOWN at desk/gears
-                    return (0.0, 1.2)
-                } else if cycle < 18.0 {
-                    // Daydream wander arc
-                    return (CGFloat(sin(time * 2.2) * 1.2), CGFloat(-cos(time * 1.8) * 0.8))
-                } else if cycle < 20.0 {
-                    // Quick alert glance upper-right
-                    return (1.3, -1.0)
-                } else {
-                    return (0.0, 0.0)
-                }
+                return (CGFloat(idlePose.lookX), CGFloat(idlePose.lookY))
             }
             return (0.0, 0.0)
         }()
 
         // Antenna bulb illumination & frequency:
-        let isIdleTwitch = isIdle && (cycle >= 18.0 && cycle < 20.0)
-        let antennaBulbLit = isRecording || isProcessing || isHovered || isHappy || isTyping || isCursorNear || isTimerLow || isIdleTwitch
-        let antennaSpeed = isTimerUrgent ? 36.0 : (isTyping ? 24.0 : (isIdleTwitch ? 28.0 : 20.0))
+        let antennaBulbLit = isRecording || isProcessing || isHovered || isHappy || isTyping || isCursorNear || isTimerLow || (isIdle && idlePose.antennaBulbPulse)
+        let antennaSpeed = isTimerUrgent ? 36.0 : (isTyping ? 24.0 : (idlePose.antennaBulbPulse ? 28.0 : 20.0))
 
         // Blinking:
         let blinkPhase = sin(time * 1.7)
@@ -1963,7 +2133,7 @@ struct NekoCharacterView: View {
 
     var body: some View {
         let isIdle = !isRecording && !isProcessing && !isDone && !isTyping && !isLookingAtTimer && !isCursorNear
-        let cycle = time.truncatingRemainder(dividingBy: 22.0)
+        let idlePose = CompanionMotionEngine.sampleIdleKinematics(time: time)
         let blinkPhase = sin(time * 1.6)
         let isBlinking = blinkPhase > 0.96 && !isProcessing && !isDone && !isHappy && !isTimerUrgent
 
@@ -1982,16 +2152,7 @@ struct NekoCharacterView: View {
             } else if isRecording {
                 return Double(audioLevel) * 9.0
             } else if isIdle {
-                if cycle >= 3.2 && cycle < 6.4 {
-                    // Perked ear toward left glance
-                    return 8.0 + sin(time * 8.0) * 4.0
-                } else if cycle >= 8.6 && cycle < 12.0 {
-                    return -4.0
-                } else if cycle >= 18.0 && cycle < 20.0 {
-                    // Alert double-take ear flutter
-                    return sin(time * 18.0) * 8.0
-                }
-                return sin(time * 1.8) * 1.5
+                return idlePose.earTwitchLeft
             }
             return 0.0
         }()
@@ -2010,16 +2171,7 @@ struct NekoCharacterView: View {
             } else if isRecording {
                 return -Double(audioLevel) * 9.0
             } else if isIdle {
-                if cycle >= 3.2 && cycle < 6.4 {
-                    return -3.0
-                } else if cycle >= 8.6 && cycle < 12.0 {
-                    // Perked ear toward right glance
-                    return 9.0 + sin(time * 8.0) * 4.0
-                } else if cycle >= 18.0 && cycle < 20.0 {
-                    // Alert perk
-                    return -sin(time * 18.0) * 8.0
-                }
-                return -sin(time * 1.8) * 1.5
+                return idlePose.earTwitchRight
             }
             return 0.0
         }()
@@ -2036,29 +2188,7 @@ struct NekoCharacterView: View {
             } else if isCursorNear {
                 return cursorLookX * 6.0
             } else if isIdle {
-                if cycle < 3.2 {
-                    // Neutral soft breathing
-                    return sin(time * 1.5) * 1.2
-                } else if cycle < 6.4 {
-                    // Look LEFT with curious cat head tilt
-                    return -6.5 + sin(time * 2.5) * 1.0
-                } else if cycle < 8.6 {
-                    return sin(time * 2.0) * 0.8
-                } else if cycle < 12.0 {
-                    // Look RIGHT with inquisitive head tilt
-                    return 6.0 + sin(time * 2.5) * 1.0
-                } else if cycle < 14.5 {
-                    // Head straight down inspecting paws
-                    return 0.0
-                } else if cycle < 18.0 {
-                    // Dreamy wandering tilt
-                    return sin(time * 1.6) * 4.5
-                } else if cycle < 20.0 {
-                    // Sudden curious double-take
-                    return 5.5
-                } else {
-                    return sin(time * 1.2) * 1.0
-                }
+                return idlePose.headTilt
             }
             return 0.0
         }()
@@ -2077,12 +2207,7 @@ struct NekoCharacterView: View {
             } else if isHovered {
                 return -1.0
             } else if isIdle {
-                if cycle >= 12.0 && cycle < 14.5 {
-                    return 1.4 // Soft head-dip down inspecting paws
-                } else if cycle >= 18.0 && cycle < 20.0 {
-                    return -1.8 // Alert perk up
-                }
-                return CGFloat(sin(time * 2.0) * 0.8) // Gentle purring / breathing bob
+                return CGFloat(idlePose.headBob)
             }
             return 0.0
         }()
@@ -2099,28 +2224,7 @@ struct NekoCharacterView: View {
             } else if isCursorNear {
                 return (CGFloat(cursorLookX * 1.8), CGFloat(-cursorLookY * 1.1))
             } else if isIdle {
-                if cycle < 3.2 {
-                    return (0.0, 0.0)
-                } else if cycle < 6.4 {
-                    // Look LEFT
-                    return (-1.4, -0.2)
-                } else if cycle < 8.6 {
-                    return (0.0, 0.0)
-                } else if cycle < 12.0 {
-                    // Look RIGHT
-                    return (1.4, -0.3)
-                } else if cycle < 14.5 {
-                    // Look DOWN at paws/desk
-                    return (0.0, 1.25)
-                } else if cycle < 18.0 {
-                    // Soft daydream wandering arc
-                    return (CGFloat(sin(time * 2.0) * 1.2), CGFloat(-cos(time * 1.6) * 0.7))
-                } else if cycle < 20.0 {
-                    // Upper-right glance
-                    return (1.3, -1.0)
-                } else {
-                    return (0.0, 0.0)
-                }
+                return (CGFloat(idlePose.lookX), CGFloat(idlePose.lookY))
             }
             return (0.0, 0.0)
         }()
@@ -2575,7 +2679,7 @@ struct BongoCatCharacterView: View {
 
     var body: some View {
         let isIdle = !isRecording && !isProcessing && !isDone && !isTyping && !isLookingAtTimer && !isCursorNear
-        let cycle = time.truncatingRemainder(dividingBy: 22.0)
+        let idlePose = CompanionMotionEngine.sampleIdleKinematics(time: time)
         let blinkPhase = sin(time * 1.6)
         let isBlinking = blinkPhase > 0.95 && !isProcessing && !isDone && !isHappy && !isTimerUrgent
 
@@ -2589,14 +2693,7 @@ struct BongoCatCharacterView: View {
             } else if isTyping {
                 return pawTapCycle > 0 ? 2.5 : -1.5 // Alternating tap!
             } else if isIdle {
-                // Playful idle micro-paw twitch or stretch
-                if cycle >= 12.0 && cycle < 14.5 {
-                    // Resting paws closer on desk inspection
-                    return 1.0
-                } else if cycle >= 18.0 && cycle < 20.0 {
-                    // Tiny eager left paw lift
-                    return -1.8
-                }
+                return CGFloat(idlePose.pawLeftY)
             }
             return 0.0
         }()
@@ -2609,9 +2706,7 @@ struct BongoCatCharacterView: View {
             } else if isTyping {
                 return pawTapCycle <= 0 ? 2.5 : -1.5 // Opposite tap!
             } else if isIdle {
-                if cycle >= 12.0 && cycle < 14.5 {
-                    return 1.0
-                }
+                return CGFloat(idlePose.pawRightY)
             }
             return 0.0
         }()
@@ -2624,12 +2719,7 @@ struct BongoCatCharacterView: View {
             } else if isTimerUrgent {
                 return -1.5 + CGFloat(abs(sin(time * 18.0))) * -1.5
             } else if isIdle {
-                if cycle >= 12.0 && cycle < 14.5 {
-                    return 1.4 // Curious desk inspection dip
-                } else if cycle >= 18.0 && cycle < 20.0 {
-                    return -1.8 // Alert perk up
-                }
-                return CGFloat(sin(time * 2.0) * 0.9) // Soft breathing bob
+                return CGFloat(idlePose.headBob)
             }
             return CGFloat(sin(time * 2.0) * 1.0)
         }()
@@ -2644,29 +2734,7 @@ struct BongoCatCharacterView: View {
             } else if isCursorNear {
                 return cursorLookX * 6.0
             } else if isIdle {
-                if cycle < 3.2 {
-                    // Relaxed neutral breathing
-                    return sin(time * 1.5) * 1.2
-                } else if cycle < 6.4 {
-                    // Curious glance to the LEFT
-                    return -6.5 + sin(time * 2.5) * 1.0
-                } else if cycle < 8.6 {
-                    return sin(time * 2.0) * 0.8
-                } else if cycle < 12.0 {
-                    // Inquisitive look to the RIGHT
-                    return 6.0 + sin(time * 2.5) * 1.0
-                } else if cycle < 14.5 {
-                    // Head straight down inspecting desk
-                    return 0.0
-                } else if cycle < 18.0 {
-                    // Daydream wander tilt
-                    return sin(time * 1.6) * 4.5
-                } else if cycle < 20.0 {
-                    // Quick alert perk
-                    return 5.5
-                } else {
-                    return sin(time * 1.2) * 1.0
-                }
+                return idlePose.headTilt
             }
             return 0.0
         }()
@@ -2684,34 +2752,13 @@ struct BongoCatCharacterView: View {
             } else if isCursorNear {
                 return (CGFloat(cursorLookX * 1.8), CGFloat(-cursorLookY * 1.1))
             } else if isIdle {
-                if cycle < 3.2 {
-                    return (0.0, 0.0)
-                } else if cycle < 6.4 {
-                    // Look LEFT
-                    return (-1.4, -0.2)
-                } else if cycle < 8.6 {
-                    return (0.0, 0.0)
-                } else if cycle < 12.0 {
-                    // Look RIGHT
-                    return (1.4, -0.3)
-                } else if cycle < 14.5 {
-                    // Inspect DOWN at desk/paws
-                    return (0.0, 1.25)
-                } else if cycle < 18.0 {
-                    // Daydream wander arc
-                    return (CGFloat(sin(time * 2.0) * 1.2), CGFloat(-cos(time * 1.6) * 0.7))
-                } else if cycle < 20.0 {
-                    // Upper-right alert glance
-                    return (1.3, -1.0)
-                } else {
-                    return (0.0, 0.0)
-                }
+                return (CGFloat(idlePose.lookX), CGFloat(idlePose.lookY))
             }
             return (0.0, 0.0)
         }()
 
-        let leftEarTwitch: Double = isIdle && (cycle >= 18.0 && cycle < 20.0) ? sin(time * 18.0) * 4.0 : 0.0
-        let rightEarTwitch: Double = isIdle && (cycle >= 8.6 && cycle < 12.0) ? sin(time * 8.0) * 3.0 : 0.0
+        let leftEarTwitch: Double = isIdle ? idlePose.earTwitchLeft * 0.7 : 0.0
+        let rightEarTwitch: Double = isIdle ? idlePose.earTwitchRight * 0.7 : 0.0
 
         VStack(spacing: -3.5) {
             // Cat Ears with pink insides
