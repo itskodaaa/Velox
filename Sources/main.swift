@@ -1859,11 +1859,13 @@ struct CompanionMotionEngine {
         )
     }
 
-    /// Computes realistic organic wake-up sequence when the cursor begins moving:
-    /// Phase 1 (0.0s - 0.22s): Sudden alert "snap" (eyes wide, subtle perk up)
-    /// Phase 2 (0.22s - 0.65s): Focused head shake (clearing thoughts, alert double-tilt)
-    /// Phase 3 (0.65s - 1.25s): Slow, smooth, inquisitive glance toward the cursor via cubic Bézier
-    /// Phase 4 (> 1.25s): Fluid curious cursor following with subtle inquisitive head tilt & eye micro-glance
+    /// Computes cinematic groggy-wake & searching sequence when cursor enters mascot orbit:
+    /// Phase 1 (0.00s - 0.25s): Sudden Startle Snap (head drops back slightly, eyes snap wide awake)
+    /// Phase 2 (0.25s - 1.15s): Dizzy/Groggy Head Spin (sweeps wide left-to-right ellipse trying to recover consciousness)
+    /// Phase 3 (1.15s - 2.10s): Searching Look-Around (scans Left, then glances Right looking for the disturbance)
+    /// Phase 4 (2.10s - 2.80s): Top Sighting & Recognition (perks chin straight up to top, catches sight of cursor with widening gaze)
+    /// Phase 5 (2.80s - 3.45s): Smooth Bézier lock-in transition from top toward target cursor position
+    /// Phase 6 (> 3.45s): Full Curious Tracking with inquisitive tilt and alive micro-glance
     static func sampleWakeAndTrackingKinematics(
         time: Double,
         wakeTime: Double,
@@ -1874,7 +1876,7 @@ struct CompanionMotionEngine {
         let now = ProcessInfo.processInfo.systemUptime
         let elapsed = max(0.0, now - wakeTime)
 
-        // Curious inquisitive offset: slightly tilted ear & head when following cursor
+        // Curious inquisitive angle when actively locked and tracking cursor
         let curiousHeadAngle = targetLookX * 5.5 + (sin(time * 3.5) * 1.2)
         let microCuriousBob = sin(time * 3.0) * 0.45
 
@@ -1888,44 +1890,86 @@ struct CompanionMotionEngine {
         var pawRightY: Double = 0.0
         let antennaBulbPulse: Bool = true
 
-        if elapsed < 0.22 {
-            // Phase 1: Alert Snap! (Suddenly focuses, perked up)
-            let t = elapsed / 0.22
-            let snap = easeOutBack(t, overshoot: 1.35)
+        if elapsed < 0.25 {
+            // Phase 1: Startle Alert Snap! (Suddenly woken up, body jumps up, eyes snap wide)
+            let t = elapsed / 0.25
+            let snap = easeOutBack(t, overshoot: 1.45)
             lookX = 0.0
-            lookY = -snap * 0.4 // Snaps eyes slightly upward
+            lookY = -snap * 0.5
             headTilt = 0.0
-            headBob = -snap * 1.5 // Jumps up slightly in surprise/alertness
-            earTwitchLeft = snap * 6.0
-            earTwitchRight = snap * 6.0
-            pawLeftY = -snap * 1.2
-            pawRightY = -snap * 1.2
-        } else if elapsed < 0.65 {
-            // Phase 2: Focused Head Shake! (Left-right quick double shake to orient itself)
-            let t = (elapsed - 0.22) / 0.43
-            let shakeAngle = sin(t * .pi * 4.0) * (1.0 - t) * 7.5 // Damped oscillation shake
-            lookX = sin(t * .pi * 3.0) * 0.3 * (1.0 - t)
-            lookY = -0.1
-            headTilt = shakeAngle
-            headBob = -0.5 + sin(t * .pi * 4.0) * 0.4
-            earTwitchLeft = -shakeAngle * 0.8
-            earTwitchRight = shakeAngle * 0.8
-            pawLeftY = -0.5
-            pawRightY = -0.5
-        } else if elapsed < 1.35 {
-            // Phase 3: Slowly look at the cursor via Cubic Bézier curve
-            let t = (elapsed - 0.65) / 0.70
+            headBob = -snap * 1.8
+            earTwitchLeft = snap * 7.5
+            earTwitchRight = snap * 7.5
+            pawLeftY = -snap * 1.5
+            pawRightY = -snap * 1.5
+        } else if elapsed < 1.15 {
+            // Phase 2: Drowsy/Groggy Head Spin (Sweeps head left-to-right roll to regain consciousness)
+            let t = (elapsed - 0.25) / 0.90
+            let spinProgress = t * .pi * 4.0 // 2 full sweeping cycles
+            let spinDecay = 1.0 - (t * 0.35) // Gradually narrows as consciousness returns
+
+            // Left-to-right spinning tilt (-14 deg to +14 deg) with vertical pitch roll
+            headTilt = sin(spinProgress) * 13.5 * spinDecay
+            lookX = sin(spinProgress) * 1.4 * spinDecay
+            lookY = -cos(spinProgress) * 0.65 * spinDecay
+            headBob = -0.6 + sin(spinProgress * 2.0) * 0.5 * spinDecay
+
+            earTwitchLeft = -headTilt * 0.85
+            earTwitchRight = headTilt * 0.85
+            pawLeftY = sin(spinProgress) * 0.7
+            pawRightY = -sin(spinProgress) * 0.7
+        } else if elapsed < 1.62 {
+            // Phase 3a: Searching Scan LEFT ("Huh? Where is that?")
+            let t = (elapsed - 1.15) / 0.47
             let ease = easeInOutCubic(t)
-            lookX = ease * targetLookX
-            lookY = ease * targetLookY
-            headTilt = ease * curiousHeadAngle
+            lookX = -1.55 * ease
+            lookY = -0.35 * ease
+            headTilt = -9.0 * ease
             headBob = microCuriousBob
-            earTwitchLeft = (targetLookX < 0 ? 5.5 : -2.0) * ease
-            earTwitchRight = (targetLookX > 0 ? 5.5 : -2.0) * ease
+            earTwitchLeft = 9.0 * ease
+            earTwitchRight = -4.0 * ease
             pawLeftY = 0.0
             pawRightY = 0.0
+        } else if elapsed < 2.10 {
+            // Phase 3b: Searching Scan RIGHT ("Not here... over there?")
+            let t = (elapsed - 1.62) / 0.48
+            let ease = easeInOutCubic(t)
+            lookX = -1.55 + ease * (1.55 + 1.50)
+            lookY = -0.35 + ease * (-0.15 - (-0.35))
+            headTilt = -9.0 + ease * 18.0 // Turns all the way from -9 to +9 deg
+            headBob = microCuriousBob
+            earTwitchLeft = 9.0 * (1.0 - ease)
+            earTwitchRight = 9.5 * ease
+            pawLeftY = 0.0
+            pawRightY = 0.0
+        } else if elapsed < 2.80 {
+            // Phase 4: Sighting at the TOP ("Ah! Up there!")
+            let t = (elapsed - 2.10) / 0.70
+            let ease = easeOutBack(min(1.0, t * 1.3), overshoot: 1.25)
+            // Head tilts upward toward the ceiling, eyes look directly up
+            lookX = 1.50 * (1.0 - min(1.0, t * 1.5))
+            lookY = -1.65 * ease
+            headTilt = 9.0 * (1.0 - min(1.0, t * 1.5))
+            headBob = -1.9 * ease // Perks up toward top
+            earTwitchLeft = 8.5 * ease
+            earTwitchRight = 8.5 * ease
+            pawLeftY = -0.8 * ease
+            pawRightY = -0.8 * ease
+        } else if elapsed < 3.45 {
+            // Phase 5: Smooth Bézier Lock-In (Bridges from top-look to the exact cursor position)
+            let t = (elapsed - 2.80) / 0.65
+            let ease = easeInOutCubic(t)
+            let inv = 1.0 - ease
+            lookX = ease * targetLookX
+            lookY = (-1.65 * inv) + (ease * targetLookY)
+            headTilt = ease * curiousHeadAngle
+            headBob = (-1.9 * inv) + (ease * microCuriousBob)
+            earTwitchLeft = (8.5 * inv) + (ease * (targetLookX < 0 ? 5.5 : -2.0))
+            earTwitchRight = (8.5 * inv) + (ease * (targetLookX > 0 ? 5.5 : -2.0))
+            pawLeftY = -0.8 * inv
+            pawRightY = -0.8 * inv
         } else {
-            // Phase 4: Full Curious Follow! Follows cursor with inquisitive head tilt and alive micro-glance
+            // Phase 6: Full Curious Tracking (Locked-on inquisitive following)
             lookX = targetLookX
             lookY = targetLookY
             headTilt = curiousHeadAngle
@@ -2462,305 +2506,7 @@ struct NekoCharacterView: View {
     }
 }
 
-// MARK: - 3. Axolotl Character (Acoustic Feathery Gills & Swimming Companion)
-struct AxolotlGillPlume: View {
-    let angle: Double
-    let length: Double
-    let color: Color
-    let tipColor: Color
-    let isFlipped: Bool
 
-    var body: some View {
-        Capsule()
-            .fill(
-                LinearGradient(
-                    colors: isFlipped ? [tipColor, color] : [color, tipColor],
-                    startPoint: isFlipped ? .leading : .trailing,
-                    endPoint: isFlipped ? .trailing : .leading
-                )
-            )
-            .frame(width: CGFloat(max(3.5, length)), height: 2.2)
-            .shadow(color: color.opacity(0.35), radius: 1)
-            .rotationEffect(.degrees(angle))
-    }
-}
-
-struct AxolotlCharacterView: View {
-    let time: Double
-    let isRecording: Bool
-    let isProcessing: Bool
-    let isDone: Bool
-    let audioLevel: Float
-    let accentColor: Color
-    var isHovered: Bool = false
-    var isHappy: Bool = false
-    var cursorLookX: Double = 0.0
-    var cursorLookY: Double = 0.0
-    var isCursorNear: Bool = false
-    var isTyping: Bool = false
-    var isFlowActive: Bool = false
-    var isLookingAtTimer: Bool = false
-    var isTimerLow: Bool = false
-    var isTimerUrgent: Bool = false
-    var timerLookX: Double = 0.0
-    var timerLookY: Double = 0.0
-
-    var body: some View {
-        let blinkPhase = sin(time * 1.5)
-        let isBlinking = blinkPhase > 0.95 && !isProcessing && !isDone && !isHappy && !isTimerUrgent
-
-        // Underwater gentle swimming bob:
-        let swimBob: Double = {
-            if isHappy {
-                return -3.5 + abs(sin(time * 14.0)) * -2.5
-            } else if isRecording {
-                return -2.0 + sin(time * 6.0) * 1.5
-            } else if isLookingAtTimer {
-                return -timerLookY * 1.5
-            } else if isTimerUrgent {
-                return -2.0 + sin(time * 16.0) * 2.0
-            } else if isTyping {
-                return -1.0 + sin(time * 4.0) * 0.8
-            } else if isTimerLow {
-                return sin(time * 10.0) * 1.5
-            }
-            return sin(time * 2.2) * 1.8
-        }()
-
-        let bodyTilt: Double = {
-            if isHappy {
-                return sin(time * 14.0) * 8.0
-            } else if isLookingAtTimer {
-                return timerLookX * 7.5
-            } else if isTyping {
-                return -3.5 + sin(time * 4.0) * 1.2
-            } else if isTimerLow {
-                return sin(time * 20.0) * (isTimerUrgent ? 1.6 : 0.8)
-            } else if isCursorNear {
-                return cursorLookX * 7.0
-            }
-            return sin(time * 1.8) * 2.5
-        }()
-
-        let (eyeOffsetX, eyeOffsetY): (CGFloat, CGFloat) = {
-            if isHappy {
-                return (0.0, 0.0)
-            } else if isLookingAtTimer {
-                return (CGFloat(timerLookX * 1.8), CGFloat(-timerLookY * 1.1))
-            } else if isTyping {
-                return (-1.0, 0.8) // Downward attentive glance
-            } else if isTimerUrgent {
-                return (CGFloat(sin(time * 8.0) * 1.4), 0.0)
-            } else if isCursorNear {
-                return (CGFloat(cursorLookX * 1.8), CGFloat(-cursorLookY * 1.1))
-            }
-            return (0.0, 0.0)
-        }()
-
-        // Voice gill flare expansion & ripple
-        let voiceMultiplier = isRecording ? (1.0 + Double(audioLevel) * 1.4) : 1.0
-        let gillColor = Color(red: 0.98, green: 0.42, blue: 0.60)
-        let gillTipColor = Color(red: 1.0, green: 0.65, blue: 0.78)
-        let bodyBaseColor = Color(red: 1.0, green: 0.78, blue: 0.85)
-
-        ZStack {
-            // 1. External Feathery Gills (3 pairs: top, middle, bottom on left & right)
-            HStack(spacing: 14) {
-                // Left 3 Gills
-                VStack(spacing: 2.0) {
-                    AxolotlGillPlume(
-                        angle: -26.0 + (isTyping ? sin(time * 14.0) * 4.0 : sin(time * 3.0) * 3.0),
-                        length: 6.8 * voiceMultiplier,
-                        color: gillColor,
-                        tipColor: gillTipColor,
-                        isFlipped: true
-                    )
-                    AxolotlGillPlume(
-                        angle: -8.0 + (isTyping ? sin(time * 16.0 + 1.0) * 5.0 : sin(time * 3.0 + 1.0) * 4.0),
-                        length: 8.2 * voiceMultiplier,
-                        color: gillColor,
-                        tipColor: gillTipColor,
-                        isFlipped: true
-                    )
-                    AxolotlGillPlume(
-                        angle: 14.0 + (isTyping ? sin(time * 14.0 + 2.0) * 4.0 : sin(time * 3.0 + 2.0) * 3.0),
-                        length: 6.2 * voiceMultiplier,
-                        color: gillColor,
-                        tipColor: gillTipColor,
-                        isFlipped: true
-                    )
-                }
-
-                // Right 3 Gills
-                VStack(spacing: 2.0) {
-                    AxolotlGillPlume(
-                        angle: 26.0 + (isTyping ? -sin(time * 14.0) * 4.0 : -sin(time * 3.0) * 3.0),
-                        length: 6.8 * voiceMultiplier,
-                        color: gillColor,
-                        tipColor: gillTipColor,
-                        isFlipped: false
-                    )
-                    AxolotlGillPlume(
-                        angle: 8.0 + (isTyping ? -sin(time * 16.0 + 1.0) * 5.0 : -sin(time * 3.0 + 1.0) * 4.0),
-                        length: 8.2 * voiceMultiplier,
-                        color: gillColor,
-                        tipColor: gillTipColor,
-                        isFlipped: false
-                    )
-                    AxolotlGillPlume(
-                        angle: -14.0 + (isTyping ? -sin(time * 14.0 + 2.0) * 4.0 : -sin(time * 3.0 + 2.0) * 3.0),
-                        length: 6.2 * voiceMultiplier,
-                        color: gillColor,
-                        tipColor: gillTipColor,
-                        isFlipped: false
-                    )
-                }
-            }
-            .offset(y: -1)
-
-            // 2. Axolotl Chubby Cute Head & Body
-            ZStack {
-                RoundedRectangle(cornerRadius: 9)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Color(red: 1.0, green: 0.83, blue: 0.89),
-                                bodyBaseColor
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-                    .frame(width: 19, height: 16)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 9)
-                            .stroke(Color.white.opacity(0.65), lineWidth: 0.7)
-                    )
-                    .shadow(color: gillColor.opacity(isHovered || isCursorNear ? 0.35 : 0.15), radius: 2.5)
-
-                // 3. Face Features
-                if isHappy || isDone {
-                    VStack(spacing: 1.0) {
-                        HStack(spacing: 3) {
-                            Text("^")
-                                .font(.system(size: 8, weight: .bold))
-                                .foregroundColor(Color(red: 0.4, green: 0.15, blue: 0.25))
-                            Circle()
-                                .fill(Color(red: 1.0, green: 0.45, blue: 0.65))
-                                .frame(width: 2.4, height: 1.8)
-                            Text("^")
-                                .font(.system(size: 8, weight: .bold))
-                                .foregroundColor(Color(red: 0.4, green: 0.15, blue: 0.25))
-                        }
-                        Circle()
-                            .trim(from: 0.0, to: 0.5)
-                            .stroke(Color(red: 0.45, green: 0.15, blue: 0.25), lineWidth: 1.0)
-                            .frame(width: 4.5, height: 3)
-                            .rotationEffect(.degrees(180))
-                            .offset(y: -1)
-                    }
-                } else if isProcessing {
-                    HStack(spacing: 3) {
-                        Circle()
-                            .fill(gillColor)
-                            .frame(width: 2.8, height: 2.8)
-                            .scaleEffect(0.6 + max(0, sin(time * 6.0)) * 0.6)
-                        Circle()
-                            .fill(gillColor)
-                            .frame(width: 2.8, height: 2.8)
-                            .scaleEffect(0.6 + max(0, sin(time * 6.0 + 1.2)) * 0.6)
-                    }
-                } else {
-                    VStack(spacing: 0.5) {
-                        // Wide Expressive Glistening Eyes
-                        HStack(spacing: 4.5) {
-                            // Left Eye
-                            ZStack {
-                                Circle()
-                                    .fill(Color(red: 0.18, green: 0.08, blue: 0.14))
-                                    .frame(width: 4.2, height: 4.8)
-                                    .scaleEffect(y: isBlinking ? 0.15 : 1.0)
-                                    .offset(x: eyeOffsetX, y: eyeOffsetY)
-
-                                if !isBlinking {
-                                    Circle()
-                                        .fill(Color.white)
-                                        .frame(width: 1.5, height: 1.5)
-                                        .offset(x: eyeOffsetX - 0.7, y: eyeOffsetY - 1.1)
-                                    Circle()
-                                        .fill(Color.white.opacity(0.85))
-                                        .frame(width: 0.8, height: 0.8)
-                                        .offset(x: eyeOffsetX + 0.9, y: eyeOffsetY + 1.0)
-                                }
-                            }
-
-                            // Right Eye
-                            ZStack {
-                                Circle()
-                                    .fill(Color(red: 0.18, green: 0.08, blue: 0.14))
-                                    .frame(width: 4.2, height: 4.8)
-                                    .scaleEffect(y: isBlinking ? 0.15 : 1.0)
-                                    .offset(x: eyeOffsetX, y: eyeOffsetY)
-
-                                if !isBlinking {
-                                    Circle()
-                                        .fill(Color.white)
-                                        .frame(width: 1.5, height: 1.5)
-                                        .offset(x: eyeOffsetX - 0.7, y: eyeOffsetY - 1.1)
-                                    Circle()
-                                        .fill(Color.white.opacity(0.85))
-                                        .frame(width: 0.8, height: 0.8)
-                                        .offset(x: eyeOffsetX + 0.9, y: eyeOffsetY + 1.0)
-                                }
-                            }
-                        }
-
-                        // Rosy Cheek Blushes & Axolotl Smile
-                        ZStack {
-                            HStack(spacing: 6.5) {
-                                Circle()
-                                    .fill(Color(red: 1.0, green: 0.45, blue: 0.65).opacity(isCursorNear || isTimerLow ? 0.95 : 0.55))
-                                    .frame(width: 2.6, height: 1.6)
-                                Circle()
-                                    .fill(Color(red: 1.0, green: 0.45, blue: 0.65).opacity(isCursorNear || isTimerLow ? 0.95 : 0.55))
-                                    .frame(width: 2.6, height: 1.6)
-                            }
-
-                            if isRecording {
-                                Circle()
-                                    .stroke(Color(red: 0.45, green: 0.15, blue: 0.25), lineWidth: 0.9)
-                                    .frame(width: 2.4, height: 2.8)
-                                    .offset(y: 1.0)
-                            } else {
-                                Circle()
-                                    .trim(from: 0.0, to: 0.5)
-                                    .stroke(Color(red: 0.45, green: 0.15, blue: 0.25), lineWidth: 0.85)
-                                    .frame(width: 3.2, height: 2.2)
-                                    .rotationEffect(.degrees(180))
-                                    .offset(y: 0.2)
-                            }
-                        }
-                    }
-                }
-
-                if isTimerUrgent {
-                    Text("⚡")
-                        .font(.system(size: 6))
-                        .offset(x: 9, y: -7 + sin(time * 8.0) * 1.2)
-                } else if isTimerLow {
-                    Text("💧")
-                        .font(.system(size: 5.5))
-                        .offset(x: 8, y: -6 + sin(time * 6.0) * 1.0)
-                }
-            }
-        }
-        .rotationEffect(.degrees(bodyTilt))
-        .offset(y: CGFloat(swimBob))
-        .animation(.spring(response: 0.28, dampingFraction: 0.72), value: isTyping)
-        .animation(.spring(response: 0.26, dampingFraction: 0.75), value: isCursorNear)
-        .animation(.spring(response: 0.26, dampingFraction: 0.75), value: isLookingAtTimer)
-    }
-}
 
 // MARK: - 3b. Bongo Cat Character (Tapping Paws, Piano Desk, Expressive Typing Reactions)
 struct BongoCatCharacterView: View {
@@ -3044,236 +2790,7 @@ struct BongoCatCharacterView: View {
 }
 
 
-// MARK: - 4. Kuro Character (Clever Shadow Fox)
-struct KuroCharacterView: View {
-    let time: Double
-    let isRecording: Bool
-    let isProcessing: Bool
-    let isDone: Bool
-    let audioLevel: Float
-    let accentColor: Color
-    var isHovered: Bool = false
-    var isHappy: Bool = false
-    var cursorLookX: Double = 0.0
-    var cursorLookY: Double = 0.0
-    var isCursorNear: Bool = false
-    var isTyping: Bool = false
-    var isFlowActive: Bool = false
-    var isLookingAtTimer: Bool = false
-    var isTimerLow: Bool = false
-    var isTimerUrgent: Bool = false
-    var timerLookX: Double = 0.0
-    var timerLookY: Double = 0.0
 
-    var body: some View {
-        let blinkPhase = sin(time * 1.7)
-        let isBlinking = blinkPhase > 0.96 && !isProcessing && !isDone && !isHappy && !isTimerUrgent
-
-        // Fox ear angles:
-        let leftEarAngle: Double = {
-            if isHappy {
-                return sin(time * 18.0) * 12.0
-            } else if isLookingAtTimer {
-                return timerLookX * 4.0
-            } else if isTyping {
-                return -8.0 // Subtle alert cocked ear
-            } else if isTimerUrgent {
-                return sin(time * 26.0) * 12.0
-            } else if isCursorNear {
-                return cursorLookX * 9.0 - 4.0
-            }
-            return -4.0
-        }()
-
-        let rightEarAngle: Double = {
-            if isHappy {
-                return -sin(time * 18.0) * 12.0
-            } else if isLookingAtTimer {
-                return timerLookX * 14.0 // Pointed toward timer!
-            } else if isTyping {
-                return 8.0 // Subtle alert ear
-            } else if isTimerUrgent {
-                return -sin(time * 26.0) * 12.0
-            } else if isCursorNear {
-                return cursorLookX * 9.0 + 4.0
-            }
-            return 4.0
-        }()
-
-        let headTilt: Double = {
-            if isHappy {
-                return sin(time * 16.0) * 7.0
-            } else if isLookingAtTimer {
-                return timerLookX * 7.5
-            } else if isTyping {
-                return -3.0 // Gentle subtle tilt
-            } else if isTimerLow {
-                return sin(time * 24.0) * (isTimerUrgent ? 1.6 : 0.8)
-            } else if isCursorNear {
-                return cursorLookX * 7.5
-            }
-            return 0.0
-        }()
-
-        let bob: CGFloat = {
-            if isHappy {
-                return -2.5 + CGFloat(abs(sin(time * 14.0))) * -1.5
-            } else if isLookingAtTimer {
-                return CGFloat(-timerLookY * 1.5)
-            } else if isTyping {
-                return -0.5 // Calm attentive posture
-            } else if isTimerUrgent {
-                return -2.0 + CGFloat(abs(sin(time * 18.0))) * -1.8
-            } else if isTimerLow {
-                return CGFloat(sin(time * 24.0) * 0.6)
-            } else if isHovered {
-                return -1.0
-            }
-            return 0.0
-        }()
-
-        let (eyeOffsetX, eyeOffsetY): (CGFloat, CGFloat) = {
-            if isHappy {
-                return (0.0, 0.0)
-            } else if isLookingAtTimer {
-                return (CGFloat(timerLookX * 2.0), CGFloat(-timerLookY * 1.1))
-            } else if isTyping {
-                return (-1.0, 0.7) // Gentle downward keyboard glance
-            } else if isTimerUrgent {
-                return (CGFloat(sin(time * 8.0) * 1.6), 0.0)
-            } else if isCursorNear {
-                return (CGFloat(cursorLookX * 2.0), CGFloat(-cursorLookY * 1.1))
-            }
-            return (0.0, 0.0)
-        }()
-
-        VStack(spacing: -3) {
-            // Fox Pointed Ears
-            HStack(spacing: 8) {
-                ZStack {
-                    Path { p in
-                        p.move(to: CGPoint(x: 0, y: 7))
-                        p.addLine(to: CGPoint(x: 3.5, y: 0))
-                        p.addLine(to: CGPoint(x: 7, y: 7))
-                        p.closeSubpath()
-                    }
-                    .fill(Color(white: 0.22))
-
-                    Path { p in
-                        p.move(to: CGPoint(x: 1.5, y: 6))
-                        p.addLine(to: CGPoint(x: 3.5, y: 1.5))
-                        p.addLine(to: CGPoint(x: 5.5, y: 6))
-                        p.closeSubpath()
-                    }
-                    .fill(accentColor)
-                }
-                .frame(width: 7, height: 7)
-                .rotationEffect(.degrees(leftEarAngle))
-
-                ZStack {
-                    Path { p in
-                        p.move(to: CGPoint(x: 0, y: 7))
-                        p.addLine(to: CGPoint(x: 3.5, y: 0))
-                        p.addLine(to: CGPoint(x: 7, y: 7))
-                        p.closeSubpath()
-                    }
-                    .fill(Color(white: 0.22))
-
-                    Path { p in
-                        p.move(to: CGPoint(x: 1.5, y: 6))
-                        p.addLine(to: CGPoint(x: 3.5, y: 1.5))
-                        p.addLine(to: CGPoint(x: 5.5, y: 6))
-                        p.closeSubpath()
-                    }
-                    .fill(accentColor)
-                }
-                .frame(width: 7, height: 7)
-                .rotationEffect(.degrees(rightEarAngle))
-            }
-            .offset(y: 2)
-
-            ZStack {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [Color(white: 0.24), Color(white: 0.12)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-                    .frame(width: 19, height: 17)
-                    .overlay(
-                        Circle()
-                            .stroke(LinearGradient(colors: [Color.white.opacity(0.4), Color.clear], startPoint: .top, endPoint: .bottom), lineWidth: 0.6)
-                    )
-
-                if isDone || isHappy {
-                    HStack(spacing: 3) {
-                        Text("^")
-                            .font(.system(size: 7.5, weight: .bold))
-                            .foregroundColor(accentColor)
-                        Circle().fill(Color.pink.opacity(0.85)).frame(width: 2, height: 1.5)
-                        Text("^")
-                            .font(.system(size: 7.5, weight: .bold))
-                            .foregroundColor(accentColor)
-                    }
-                } else if isProcessing {
-                    HStack(spacing: 3) {
-                        Circle().fill(accentColor).frame(width: 2.5, height: 2.5)
-                        Circle().fill(accentColor).frame(width: 2.5, height: 2.5)
-                    }
-                } else {
-                    VStack(spacing: 0.5) {
-                        HStack(spacing: 4) {
-                            // Left Eye
-                            Capsule()
-                                .fill(accentColor)
-                                .frame(width: isCursorNear ? 3.6 : 3.2, height: 4.5)
-                                .scaleEffect(y: isBlinking ? 0.15 : 1.0)
-                                .offset(x: eyeOffsetX, y: eyeOffsetY)
-                                .shadow(color: accentColor.opacity(0.7), radius: 2)
-
-                            // Right Eye
-                            Capsule()
-                                .fill(accentColor)
-                                .frame(width: isCursorNear ? 3.6 : 3.2, height: 4.5)
-                                .scaleEffect(y: isBlinking ? 0.15 : 1.0)
-                                .offset(x: eyeOffsetX, y: eyeOffsetY)
-                                .shadow(color: accentColor.opacity(0.7), radius: 2)
-                        }
-
-                        // Fox Snout & Smirk
-                        Circle()
-                            .fill(Color.black.opacity(0.9))
-                            .frame(width: 1.8, height: 1.2)
-
-                        if isTimerUrgent {
-                            Text("^")
-                                .font(.system(size: 5.0, weight: .bold))
-                                .foregroundColor(accentColor.opacity(0.9))
-                                .offset(y: -1)
-                        }
-                    }
-                }
-
-                if isTimerUrgent {
-                    Text("⚡")
-                        .font(.system(size: 6))
-                        .offset(x: 8, y: -7 + sin(time * 8.0) * 1.2)
-                } else if isTimerLow {
-                    Text("💧")
-                        .font(.system(size: 5.5))
-                        .offset(x: 7, y: -6 + sin(time * 6.0) * 1.0)
-                }
-            }
-        }
-        .rotationEffect(.degrees(headTilt))
-        .offset(y: bob)
-        .animation(.spring(response: 0.28, dampingFraction: 0.72), value: isTyping)
-        .animation(.spring(response: 0.26, dampingFraction: 0.75), value: isCursorNear)
-        .animation(.spring(response: 0.26, dampingFraction: 0.75), value: isLookingAtTimer)
-    }
-}
 
 // MARK: - 5. Custom GIF Player Support
 struct CustomGIFCharacterView: NSViewRepresentable {
