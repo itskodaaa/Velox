@@ -4,8 +4,12 @@
 *.swo
 
 # Build artifacts
+Mumblr_bin
+Mumbler_bin
 Velox_bin
 ParakeetFlow_bin
+Mumblr.app/
+Mumbler.app/
 Velox.app/
 ParakeetFlow.app/
 .build/
@@ -21,6 +25,8 @@ env/
 config.json
 
 # Temporary audio recordings
+/tmp/mumblr_*.wav
+/tmp/mumbler_*.wav
 /tmp/parakeet_*.wav
 
 # IDE

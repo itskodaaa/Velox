@@ -274,7 +274,7 @@ final class AppState: ObservableObject {
     @AppStorage("lmstudio_url") var lmStudioUrl: String = "http://127.0.0.1:1234"
     @AppStorage("lmstudio_model") var lmStudioModel: String = "local-model"
     @AppStorage("use_llm_polish") var useLlmPolish: Bool = true
-    @AppStorage("custom_vocab") var customVocab: String = "Recurring Document, Recalling -> Recurring, Vozia, how far, abeg, naira, GitHub, PR, Velox, Vercel, LiveKit, Conduit, Docker, Next.js, CI/CD, Supabase, Tailwind, TypeScript, React, model, models"
+    @AppStorage("custom_vocab") var customVocab: String = "Recurring Document, Recalling -> Recurring, Vozia, how far, abeg, naira, GitHub, PR, Mumblr, Vercel, LiveKit, Conduit, Docker, Next.js, CI/CD, Supabase, Tailwind, TypeScript, React, model, models"
     @AppStorage("auto_paste") var autoPaste: Bool = true
     @Published var openRouterBalanceText: String = "OpenRouter"
 
@@ -394,7 +394,15 @@ final class AppState: ObservableObject {
     }
 
     private var configURL: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".parakeetflow/config.json")
+        let mumblrConfig = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".mumblr/config.json")
+        if FileManager.default.fileExists(atPath: mumblrConfig.path) {
+            return mumblrConfig
+        }
+        let legacyConfig = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".parakeetflow/config.json")
+        if FileManager.default.fileExists(atPath: legacyConfig.path) {
+            return legacyConfig
+        }
+        return mumblrConfig
     }
 
     func loadConfigFromDisk() {
@@ -446,9 +454,13 @@ final class AppState: ObservableObject {
 
     // MARK: - History & Retry Management
     func loadHistoryFromDisk() {
-        let historyUrl = FileManager.default.homeDirectoryForCurrentUser
+        let mumblrUrl = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".mumblr")
+            .appendingPathComponent("history.json")
+        let legacyUrl = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".parakeetflow")
             .appendingPathComponent("history.json")
+        let historyUrl = FileManager.default.fileExists(atPath: mumblrUrl.path) ? mumblrUrl : legacyUrl
         guard let data = try? Data(contentsOf: historyUrl) else { return }
         if let items = try? JSONDecoder().decode([TranscriptionHistoryItem].self, from: data) {
             DispatchQueue.main.async {
@@ -480,7 +492,7 @@ final class AppState: ObservableObject {
     }
 
     private func saveHistoryToDisk() {
-        let historyDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".parakeetflow")
+        let historyDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".mumblr")
         let historyUrl = historyDir.appendingPathComponent("history.json")
         try? FileManager.default.createDirectory(at: historyDir, withIntermediateDirectories: true)
         if let data = try? JSONEncoder().encode(historyItems) {
@@ -506,10 +518,14 @@ final class AppState: ObservableObject {
     func retryLastFailedTranscription() {
         var path = lastFailedAudioPath
         if path.isEmpty || !FileManager.default.fileExists(atPath: path) {
-            let backup = "/tmp/parakeet_last_recording.wav"
+            let backup = "/tmp/mumblr_last_recording.wav"
+            let legacyBackup = "/tmp/parakeet_last_recording.wav"
             if FileManager.default.fileExists(atPath: backup) {
                 path = backup
                 lastFailedAudioPath = backup
+            } else if FileManager.default.fileExists(atPath: legacyBackup) {
+                path = legacyBackup
+                lastFailedAudioPath = legacyBackup
             } else {
                 statusText = "No recording audio found"
                 return
@@ -910,7 +926,12 @@ final class DaemonManager {
         isStarting = true
 
         let venvPython = "/Users/macbookair/Documents/GitHub/rand/stt_bench/.venv/bin/python"
-        let scriptPath = "/Users/macbookair/Documents/GitHub/rand/ParakeetFlow/parakeet_daemon.py"
+        let candidateDaemons = [
+            "/Users/macbookair/Documents/GitHub/mumblr/mumblr_daemon.py",
+            "/Users/macbookair/Documents/GitHub/mumblr/parakeet_daemon.py",
+            "/Users/macbookair/Documents/GitHub/rand/ParakeetFlow/parakeet_daemon.py"
+        ]
+        let scriptPath = candidateDaemons.first(where: { FileManager.default.fileExists(atPath: $0) }) ?? candidateDaemons[0]
 
         guard FileManager.default.fileExists(atPath: venvPython),
               FileManager.default.fileExists(atPath: scriptPath) else {
@@ -920,9 +941,10 @@ final class DaemonManager {
 
         let script = """
         export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+        pkill -f mumblr_daemon.py 2>/dev/null || true
         pkill -f parakeet_daemon.py 2>/dev/null || true
         sleep 0.2
-        nohup "\(venvPython)" "\(scriptPath)" > /tmp/parakeet_daemon.log 2>&1 &
+        nohup "\(venvPython)" "\(scriptPath)" > /tmp/mumblr_daemon.log 2>&1 &
         """
 
         let task = Process()
@@ -958,14 +980,14 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
     private var meterTimer: Timer?
     private var durationTimer: Timer?
     private var isStopping: Bool = false
-    let recordPath = "/tmp/parakeet_recording.wav"
+    let recordPath = "/tmp/mumblr_recording.wav"
 
     func start() {
         if isStopping { return }
         // Ensure no stale ffmpeg process locks the recording file or microphone
         let killTask = Process()
         killTask.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
-        killTask.arguments = ["-9", "-f", "ffmpeg.*parakeet_recording"]
+        killTask.arguments = ["-9", "-f", "ffmpeg.*(mumblr|parakeet)_recording"]
         try? killTask.run()
         killTask.waitUntilExit()
 
@@ -1079,7 +1101,7 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
             self.isStopping = false
             let exists = FileManager.default.fileExists(atPath: self.recordPath)
             if exists {
-                let backupPath = "/tmp/parakeet_last_recording.wav"
+                let backupPath = "/tmp/mumblr_last_recording.wav"
                 try? FileManager.default.removeItem(atPath: backupPath)
                 try? FileManager.default.copyItem(atPath: self.recordPath, toPath: backupPath)
                 completion(backupPath)
@@ -1432,26 +1454,26 @@ final class HotkeyManager {
     }
 
     private func setupFileTrigger() {
-        let triggerPath = "/tmp/parakeet_toggle"
+        let triggerPath = "/tmp/mumblr_toggle"
         if !FileManager.default.fileExists(atPath: triggerPath) {
             FileManager.default.createFile(atPath: triggerPath, contents: Data(), attributes: nil)
         }
         let fd = open(triggerPath, O_EVTONLY)
-        guard fd >= 0 else { return }
-
-        let source = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: fd,
-            eventMask: [.write, .extend, .attrib],
-            queue: .main
-        )
-        source.setEventHandler { [weak self] in
-            self?.toggleRecording()
+        if fd >= 0 {
+            let source = DispatchSource.makeFileSystemObjectSource(
+                fileDescriptor: fd,
+                eventMask: [.write, .extend, .attrib],
+                queue: .main
+            )
+            source.setEventHandler { [weak self] in
+                self?.toggleRecording()
+            }
+            source.setCancelHandler {
+                close(fd)
+            }
+            source.resume()
+            self.fileSource = source
         }
-        source.setCancelHandler {
-            close(fd)
-        }
-        source.resume()
-        self.fileSource = source
     }
 
     func setShortcut(_ key: String) {
@@ -1506,6 +1528,13 @@ final class HotkeyManager {
     }
 
     private func setupDistributedNotification() {
+        DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name("com.mumblr.toggle"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.toggleRecording()
+        }
         DistributedNotificationCenter.default().addObserver(
             forName: NSNotification.Name("com.parakeetflow.toggle"),
             object: nil,
@@ -4067,7 +4096,7 @@ final class FloatingHUDController {
 
         menu.addItem(NSMenuItem.separator())
 
-        menu.addItem(makeMenuItem(title: "Quit Velox", symbol: "power", action: #selector(contextQuit), keyEquiv: "q"))
+        menu.addItem(makeMenuItem(title: "Quit Mumblr", symbol: "power", action: #selector(contextQuit), keyEquiv: "q"))
 
         return menu
     }
@@ -4529,7 +4558,7 @@ final class CompanionTrackerManager {
         stop()
         isRunning = true
 
-        // 1. Local Monitors (within Velox app itself)
+        // 1. Local Monitors (within Mumblr app itself)
         localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged]) { [weak self] event in
             self?.handleMouseMoved(event)
             return event
@@ -4749,7 +4778,7 @@ struct MenuBarControlCenterView: View {
                     Image(systemName: "waveform.badge.microphone")
                         .font(.system(size: 16, weight: .bold))
                         .foregroundColor(state.hudAccentColor)
-                    Text("VELOX")
+                    Text("MUMBLR")
                         .font(.system(size: 8.5, weight: .black, design: .rounded))
                         .foregroundColor(isDark ? Color.white.opacity(0.9) : Color.black.opacity(0.85))
                         .tracking(1.0)
@@ -6858,7 +6887,7 @@ struct SettingsTabPane: View {
                     HStack(spacing: 3) {
                         Image(systemName: "arrow.clockwise")
                             .font(.system(size: 7.5))
-                        Text("Restart Velox")
+                        Text("Restart Mumblr")
                     }
                     .font(.system(size: 8.5, weight: .medium))
                     .foregroundColor(.secondary)
@@ -6869,7 +6898,7 @@ struct SettingsTabPane: View {
                 Spacer()
 
                 Button(action: { NSApp.terminate(nil) }) {
-                    Text("Quit Velox")
+                    Text("Quit Mumblr")
                         .font(.system(size: 8.5, weight: .regular))
                         .foregroundColor(.secondary)
                 }
@@ -6891,12 +6920,19 @@ struct SettingsTabPane: View {
     }
 
     private func restartAppAndDaemon() {
+        let candidateDaemons = [
+            "/Users/macbookair/Documents/GitHub/mumblr/mumblr_daemon.py",
+            "/Users/macbookair/Documents/GitHub/mumblr/parakeet_daemon.py",
+            "/Users/macbookair/Documents/GitHub/rand/ParakeetFlow/parakeet_daemon.py"
+        ]
+        let scriptPath = candidateDaemons.first(where: { FileManager.default.fileExists(atPath: $0) }) ?? candidateDaemons[0]
         let script = """
+        pkill -f mumblr_daemon.py || true
         pkill -f parakeet_daemon.py || true
         sleep 0.4
-        nohup /Users/macbookair/Documents/GitHub/rand/stt_bench/.venv/bin/python /Users/macbookair/Documents/GitHub/rand/ParakeetFlow/parakeet_daemon.py > /tmp/parakeet_daemon.log 2>&1 &
+        nohup /Users/macbookair/Documents/GitHub/rand/stt_bench/.venv/bin/python "\(scriptPath)" > /tmp/mumblr_daemon.log 2>&1 &
         sleep 0.8
-        open -n /Applications/Velox.app
+        open -n /Applications/Mumblr.app
         """
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/zsh")
@@ -6933,8 +6969,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "waveform.badge.microphone", accessibilityDescription: "Velox")
-            button.toolTip = "Velox — AI Voice Dictation"
+            button.image = NSImage(systemSymbolName: "waveform.badge.microphone", accessibilityDescription: "Mumblr")
+            button.toolTip = "Mumblr — AI Voice Dictation"
             button.target = self
             button.action = #selector(togglePopover(_:))
         }

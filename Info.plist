@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>Velox</string>
+    <string>Mumblr</string>
     <key>CFBundleIdentifier</key>
-    <string>com.velox.app</string>
+    <string>com.mumblr.app</string>
     <key>CFBundleName</key>
-    <string>Velox</string>
+    <string>Mumblr</string>
     <key>CFBundleDisplayName</key>
-    <string>Velox</string>
+    <string>Mumblr</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundlePackageType</key>
@@ -23,8 +23,8 @@
     <key>LSUIElement</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Velox needs access to your microphone to transcribe voice dictation locally on Apple Silicon.</string>
+    <string>Mumblr needs access to your microphone to transcribe voice dictation locally on Apple Silicon.</string>
     <key>NSAppleEventsUsageDescription</key>
-    <string>Velox pastes transcribed text at your active cursor.</string>
+    <string>Mumblr pastes transcribed text at your active cursor.</string>
 </dict>
 </plist>

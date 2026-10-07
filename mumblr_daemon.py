@@ -26,12 +26,14 @@ import numpy as np
 import soundfile as sf
 import wave
 
-PORT = int(os.environ.get("PARAKEET_PORT", "18765"))
+PORT = int(os.environ.get("MUMBLR_PORT", os.environ.get("PARAKEET_PORT", "18765")))
 MODEL_ID = "mlx-community/whisper-large-v3-turbo"
 
 HTTP_CLIENT = httpx.Client(timeout=8.0)
 
-HISTORY_DIR = Path.home() / ".parakeetflow"
+MUMBLR_DIR = Path.home() / ".mumblr"
+LEGACY_DIR = Path.home() / ".parakeetflow"
+HISTORY_DIR = MUMBLR_DIR if (MUMBLR_DIR.exists() or not LEGACY_DIR.exists()) else LEGACY_DIR
 HISTORY_FILE = HISTORY_DIR / "history.json"
 CONFIG_FILE = HISTORY_DIR / "config.json"
 
@@ -49,7 +51,7 @@ DEFAULT_CONFIG = {
     "ollama_model": "llama3.2",
     "lmstudio_url": "http://127.0.0.1:1234",
     "lmstudio_model": "local-model",
-    "custom_vocab": "how far, abeg, naira, GitHub, PR, Velox",
+    "custom_vocab": "how far, abeg, naira, GitHub, PR, Mumblr",
     "hud_position": "bottom_center",  # "left", "bottom_center", "right"
     "hud_size": "compact",     # "mini", "compact", "spacious"
     "hud_character": "gearbot", # "gearbot", "neko", "luna", "kuro", "custom"
@@ -127,8 +129,8 @@ def check_openrouter_balance(api_key: str) -> dict:
 
     headers = {
         "Authorization": f"Bearer {key}",
-        "HTTP-Referer": "https://parakeetflow.local",
-        "X-Title": "WhisperFlow",
+        "HTTP-Referer": "https://mumblr.local",
+        "X-Title": "Mumblr",
     }
 
     try:
@@ -455,7 +457,9 @@ def wispr_smart_format(text: str) -> str:
         r"\bcss\b": "CSS",
         r"\bopenrouter\b": "OpenRouter",
         r"\bwhisperflow\b": "WhisperFlow",
-        r"\bvelox\b": "Velox",
+        r"\bmumblr\b": "Mumblr",
+        r"\bmumbler\b": "Mumblr",
+        r"\bvelox\b": "Mumblr",
         r"\bnaira\b": "Naira",
         r"\bollama\b": "Ollama",
     }
@@ -918,8 +922,8 @@ def polish_text_unified(raw_text: str, cfg: dict) -> tuple[str, float, str]:
                 "https://openrouter.ai/api/v1/chat/completions",
                 headers={
                     "Authorization": f"Bearer {key}",
-                    "HTTP-Referer": "https://parakeetflow.local",
-                    "X-Title": "WhisperFlow",
+                    "HTTP-Referer": "https://mumblr.local",
+                    "X-Title": "Mumblr",
                 },
                 json=payload,
                 timeout=10.0,
@@ -1080,7 +1084,7 @@ def inference_worker():
                     target_peak = min(max_amp * 2.5, 14000.0)
                     gain = max(1.0, min(target_peak / float(max_amp), 3.0)) # max +9.5 dB gentle boost
                     boosted = np.clip(samples.astype(np.float32) * gain, -32767, 32767).astype(np.int16)
-                    norm_path = "/tmp/parakeet_normalized.wav"
+                    norm_path = "/tmp/mumblr_normalized.wav"
                     with wave.open(norm_path, "wb") as nw:
                         nw.setnchannels(1)
                         nw.setsampwidth(2)
@@ -1384,7 +1388,7 @@ def render_history_html() -> str:
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Velox — Golden Gate Glass Studio</title>
+<title>Mumblr — Golden Gate Glass Studio</title>
 <style>
   :root {{
     --bg-base: #06080d;
@@ -2135,8 +2139,8 @@ def render_history_html() -> str:
         <div class="brand">
             <div class="brand-icon">{SVG_ICONS['mic']}</div>
             <div class="brand-text">
-                <h1>Velox <span class="version-tag">M1 TURBO</span></h1>
-                <p>Velox Turbo Audio Engine (Apple Silicon Metal GPU) · 100% Private</p>
+                <h1>Mumblr <span class="version-tag">M1 TURBO</span></h1>
+                <p>Mumblr Turbo Audio Engine (Apple Silicon Metal GPU) · 100% Private</p>
             </div>
         </div>
 
@@ -2351,7 +2355,7 @@ def render_history_html() -> str:
             <option value="neko" {"selected" if config.get('hud_character') == 'neko' else ""}>🐱 Neko (Cozy Cat Companion)</option>
             <option value="luna" {"selected" if config.get('hud_character') == 'luna' else ""}>👻 Luna (Gentle Celestial Spirit)</option>
             <option value="kuro" {"selected" if config.get('hud_character') == 'kuro' else ""}>🦊 Kuro (Clever Shadow Fox)</option>
-            <option value="custom" {"selected" if config.get('hud_character') == 'custom' else ""}>📁 Custom GIF (~/.parakeetflow/character.gif)</option>
+            <option value="custom" {"selected" if config.get('hud_character') == 'custom' else ""}>📁 Custom GIF (~/.mumblr/character.gif)</option>
         </select>
         <div style="font-size: 11px; color: #94a3b8; margin-top: 4px;">
             60fps kinetic companion. No text clutter — dances to voice harmonics when listening, meshes gears when processing.
@@ -2384,7 +2388,7 @@ def render_history_html() -> str:
     <div class="section-title">Vocabulary & Accuracy</div>
     <div class="form-group">
         <label class="form-label">Custom Vocabulary & Context Hints</label>
-        <textarea class="form-textarea" id="cfg-vocab" placeholder="e.g. how far, abeg, naira, GitHub, PR, Velox">{html.escape(config.get('custom_vocab', ''))}</textarea>
+        <textarea class="form-textarea" id="cfg-vocab" placeholder="e.g. how far, abeg, naira, GitHub, PR, Mumblr">{html.escape(config.get('custom_vocab', ''))}</textarea>
     </div>
 
     <button class="btn btn-copy" style="margin-top: 10px; width: 100%; padding: 12px;" onclick="saveSettings()">

@@ -1,11 +1,11 @@
 <p align="center">
-  <img src="assets/banner.jpg" alt="Velox Banner" width="100%">
+  <img src="assets/banner.jpg" alt="Mumblr Banner" width="100%">
 </p>
 
-<h1 align="center">Velox</h1>
+<h1 align="center">Mumblr</h1>
 
 <p align="center">
-  <strong>Blazing-fast macOS dictation with Whisper Large v3, intelligent formatting, and a desktop companion.</strong>
+  <strong>Blazing-fast macOS dictation with Whisper Large v3, intelligent formatting, and an interactive desktop companion.</strong>
 </p>
 
 <p align="center">
@@ -28,18 +28,18 @@
 
 ---
 
-## What is Velox?
+## What is Mumblr?
 
-**Velox** is a native macOS menu bar dictation app that turns your voice into perfectly formatted, publication-ready text — then pastes it wherever your cursor is. It's an open-source alternative to [Wispr Flow](https://wispr.com), built from scratch for Apple Silicon.
+**Mumblr** is a native macOS menu bar dictation app and desktop companion that turns your voice into perfectly formatted, publication-ready text — then pastes it wherever your cursor is. Built from scratch for Apple Silicon.
 
-Press **⌥ Space** anywhere on your Mac. Speak. Velox transcribes your speech using OpenAI's Whisper Large v3, intelligently formats it with an LLM polisher, and pastes it directly into whatever app you're using — all in under 2 seconds.
+Press **⌥ Space** anywhere on your Mac. Speak. Mumblr transcribes your speech using OpenAI's Whisper Large v3, intelligently formats it with an LLM polisher, and pastes it directly into whatever app you're using — all in under 2 seconds.
 
 ### The Pipeline
 
 ```
 🎙️ Your Voice
    ↓  (Option + Space)
-📊 Live Audio Metering (Floating HUD)
+📊 Live Audio Metering (Floating HUD & Mascot Companion)
    ↓
 🧠 Whisper Large v3 (Groq Cloud LPU ~1.5s / Local MLX Metal fallback)
    ↓
@@ -55,7 +55,7 @@ Press **⌥ Space** anywhere on your Mac. Speak. Velox transcribes your speech u
 ### 🚀 Blazing Fast
 - **Cloud mode**: Whisper Large v3 on Groq LPU — full transcription in **~1.5 seconds**
 - **Local fallback**: MLX Whisper Large v3 Turbo on Apple Silicon Metal GPU — works offline
-- **Automatic failover**: If Groq is unreachable, Velox silently switches to local inference
+- **Automatic failover**: If Groq is unreachable, Mumblr silently switches to local inference
 
 ### 🧠 Intelligent Formatting
 - **Numbered lists**: Say *"Number 1, review the PR. Number 2, send the invoice"* → clean markdown list
@@ -138,8 +138,8 @@ Test 1: Here are three tasks for today.
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/YOUR_USERNAME/Velox.git
-cd Velox
+git clone https://github.com/itskodaaa/mumblr.git
+cd mumblr
 
 # 2. Set up the Python environment
 python3 -m venv .venv
@@ -147,8 +147,8 @@ source .venv/bin/activate
 pip install mlx mlx-whisper httpx numpy soundfile
 
 # 3. Configure your API key
-mkdir -p ~/.parakeetflow
-cat > ~/.parakeetflow/config.json << 'EOF'
+mkdir -p ~/.mumblr
+cat > ~/.mumblr/config.json << 'EOF'
 {
   "stt_engine": "groq",
   "groq_key": "YOUR_GROQ_API_KEY_HERE",
@@ -156,7 +156,7 @@ cat > ~/.parakeetflow/config.json << 'EOF'
   "use_llm_polish": true,
   "groq_model": "whisper-large-v3",
   "groq_polish_model": "qwen/qwen3.8-27b",
-  "custom_vocab": "GitHub, PR",
+  "custom_vocab": "GitHub, PR, Mumblr",
   "hud_position": "bottom_center",
   "hud_character": "gearbot",
   "hud_color": "amber",
@@ -169,15 +169,15 @@ chmod +x build.sh
 ./build.sh
 
 # 5. Start the inference daemon
-nohup .venv/bin/python parakeet_daemon.py > /tmp/parakeet_daemon.log 2>&1 &
+nohup .venv/bin/python mumblr_daemon.py > /tmp/mumblr_daemon.log 2>&1 &
 
-# 6. Launch Velox
-open /Applications/Velox.app
+# 6. Launch Mumblr
+open /Applications/Mumblr.app
 ```
 
 ### First Launch Permissions
 
-Velox will request two macOS permissions on first launch:
+Mumblr will request two macOS permissions on first launch:
 
 1. **Microphone** — Required to capture audio for dictation
 2. **Accessibility** — Required for global hotkeys and auto-paste
@@ -200,7 +200,7 @@ Grant both in **System Settings → Privacy & Security**.
 
 ### Menu Bar
 
-Click the Velox icon in the menu bar to access:
+Click the Mumblr icon in the menu bar to access:
 - Quick record button
 - Engine selector (Local Rules / LLM Polish)
 - Companion mascot picker
@@ -211,7 +211,7 @@ Click the Velox icon in the menu bar to access:
 
 ```bash
 # Toggle recording from any terminal or script
-touch /tmp/parakeet_toggle
+touch /tmp/mumblr_toggle
 ```
 
 ### Web Dashboard
@@ -226,7 +226,7 @@ Open `http://localhost:18765` in your browser for:
 
 ## Configuration
 
-All settings are stored in `~/.parakeetflow/config.json`:
+All settings are stored in `~/.mumblr/config.json`:
 
 ```jsonc
 {
@@ -242,7 +242,7 @@ All settings are stored in `~/.parakeetflow/config.json`:
 
   // Custom Vocabulary (comma-separated)
   // Add domain-specific terms to improve accuracy
-  "custom_vocab": "GitHub, PR, Velox, model, models",
+  "custom_vocab": "GitHub, PR, Mumblr, model, models",
 
   // Floating HUD
   "hud_position": "bottom_center", // "left", "bottom_center", "right"
@@ -258,7 +258,7 @@ All settings are stored in `~/.parakeetflow/config.json`:
 1. Go to [console.groq.com](https://console.groq.com)
 2. Sign up (no credit card required)
 3. Create an API key
-4. Paste it in `~/.parakeetflow/config.json` or via the web dashboard
+4. Paste it in `~/.mumblr/config.json` or via the web dashboard
 
 **Free tier limits**: ~2 hours of dictation per day, 25 requests/min — more than enough for daily use.
 
@@ -268,7 +268,7 @@ All settings are stored in `~/.parakeetflow/config.json`:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    Velox.app (Swift/SwiftUI)             │
+│                    Mumblr.app (Swift/SwiftUI)           │
 │                                                         │
 │  ┌──────────┐  ┌──────────────┐  ┌───────────────────┐  │
 │  │ Menu Bar │  │ Floating HUD │  │ Accessibility API │  │
@@ -279,11 +279,11 @@ All settings are stored in `~/.parakeetflow/config.json`:
 │                        │                                │
 │              POST /transcribe                           │
 │              {audio, context, config}                    │
-└────────────────────────┼────────────────────────────────┘
+│ └────────────────────────┼────────────────────────────────┘
                          │
                          ▼
 ┌─────────────────────────────────────────────────────────┐
-│              parakeet_daemon.py (Python)                 │
+│              mumblr_daemon.py (Python)                  │
 │              http://127.0.0.1:18765                      │
 │                                                         │
 │  ┌─────────────────┐    ┌──────────────────────────┐    │
@@ -308,11 +308,11 @@ All settings are stored in `~/.parakeetflow/config.json`:
 ### File Structure
 
 ```
-ParakeetFlow/
+mumblr/
 ├── Sources/
 │   ├── main.swift          # Native SwiftUI app (menu bar, HUD, hotkeys, paste)
 │   └── cli.swift           # CLI toggle via DistributedNotificationCenter
-├── parakeet_daemon.py      # Python inference daemon (STT + LLM + web dashboard)
+├── mumblr_daemon.py        # Python inference daemon (STT + LLM + web dashboard)
 ├── build.sh                # Build, code-sign, and install script
 ├── Info.plist              # macOS app bundle configuration
 ├── AppIcon.icns            # App icon
@@ -326,7 +326,7 @@ ParakeetFlow/
 
 ## Offline Mode
 
-Velox works fully offline with zero cloud dependencies:
+Mumblr works fully offline with zero cloud dependencies:
 
 ```json
 {
@@ -355,8 +355,8 @@ For local LLM polish, run [Ollama](https://ollama.com) and set:
 |---------|----------|
 | **"Model is warming up"** | Wait ~5 seconds after starting the daemon for the local model to load |
 | **No audio detected** | Grant microphone permission in System Settings → Privacy & Security |
-| **Hotkey doesn't work** | Grant accessibility permission and restart Velox |
-| **Groq returns errors** | Check your API key in `~/.parakeetflow/config.json` or the web dashboard |
+| **Hotkey doesn't work** | Grant accessibility permission and restart Mumblr |
+| **Groq returns errors** | Check your API key in `~/.mumblr/config.json` or the web dashboard |
 | **Slow local transcription** | Expected on M1 (~8–15s). Use Groq cloud mode for ~1.5s latency |
 
 ---
@@ -368,17 +368,17 @@ Contributions are welcome! Here's how to get started:
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/my-feature`
 3. Make your changes
-4. Test locally with `./build.sh && open /Applications/Velox.app`
+4. Test locally with `./build.sh && open /Applications/Mumblr.app`
 5. Submit a pull request
 
 ### Development Setup
 
 ```bash
 # Start the daemon in foreground for debugging
-.venv/bin/python parakeet_daemon.py
+.venv/bin/python mumblr_daemon.py
 
 # Rebuild and restart the app
-./build.sh && open /Applications/Velox.app
+./build.sh && open /Applications/Mumblr.app
 
 # Test the transcribe endpoint directly
 curl -s -X POST http://127.0.0.1:18765/transcribe \
