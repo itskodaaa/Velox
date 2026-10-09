@@ -4775,9 +4775,18 @@ struct MenuBarControlCenterView: View {
             VStack(spacing: 8) {
                 // Brand Mark
                 VStack(spacing: 3) {
-                    Image(systemName: "waveform.badge.microphone")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundColor(state.hudAccentColor)
+                    if let barImg = NSImage(named: "MenuBarIcon") {
+                        Image(nsImage: barImg)
+                            .resizable()
+                            .renderingMode(.template)
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 18, height: 18)
+                            .foregroundColor(state.hudAccentColor)
+                    } else {
+                        Image(systemName: "waveform.badge.microphone")
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundColor(state.hudAccentColor)
+                    }
                     Text("MUMBLR")
                         .font(.system(size: 8.5, weight: .black, design: .rounded))
                         .foregroundColor(isDark ? Color.white.opacity(0.9) : Color.black.opacity(0.85))
@@ -6963,17 +6972,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     var popover: NSPopover!
 
+    private var cancellables = Set<AnyCancellable>()
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
         NSApp.setActivationPolicy(.accessory)
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "waveform.badge.microphone", accessibilityDescription: "Mumblr")
             button.toolTip = "Mumblr — AI Voice Dictation"
             button.target = self
             button.action = #selector(togglePopover(_:))
         }
+        setupMenuBarIcon()
 
         let p = NSPopover()
         p.contentSize = NSSize(width: 420, height: 410)
@@ -6991,6 +7002,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         CompanionTrackerManager.shared.start()
         if AppState.shared.alwaysShowCompanion {
             FloatingHUDController.shared.show()
+        }
+    }
+
+    private func setupMenuBarIcon() {
+        updateMenuBarIcon(recording: AppState.shared.isRecording)
+
+        AppState.shared.$isRecording
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] recording in
+                self?.updateMenuBarIcon(recording: recording)
+            }
+            .store(in: &cancellables)
+    }
+
+    func updateMenuBarIcon(recording: Bool = false) {
+        guard let button = statusItem?.button else { return }
+        if recording {
+            let recImg = NSImage(systemSymbolName: "waveform.circle.fill", accessibilityDescription: "Mumblr Recording...") ?? NSImage(systemSymbolName: "record.circle.fill", accessibilityDescription: "Mumblr Recording...")
+            recImg?.isTemplate = true
+            button.image = recImg
+        } else {
+            if let customImg = NSImage(named: "MenuBarIcon") {
+                customImg.isTemplate = true
+                customImg.size = NSSize(width: 18, height: 18)
+                button.image = customImg
+            } else if let resURL = Bundle.main.url(forResource: "MenuBarIcon", withExtension: "png"),
+                      let fileImg = NSImage(contentsOf: resURL) {
+                fileImg.isTemplate = true
+                fileImg.size = NSSize(width: 18, height: 18)
+                button.image = fileImg
+            } else {
+                button.image = NSImage(systemSymbolName: "waveform.badge.microphone", accessibilityDescription: "Mumblr")
+            }
         }
     }
 

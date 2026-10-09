@@ -16,6 +16,9 @@ cp "$DIR/Info.plist" "$APP_DIR/Contents/Info.plist"
 if [ -f "$DIR/AppIcon.icns" ]; then
   cp "$DIR/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 fi
+if [ -d "$DIR/Resources" ]; then
+  cp -R "$DIR/Resources/"* "$APP_DIR/Contents/Resources/" 2>/dev/null || true
+fi
 chmod +x "$APP_DIR/Contents/MacOS/Mumblr"
 if [ -f "$DIR/mumblr_daemon.py" ]; then
   chmod +x "$DIR/mumblr_daemon.py"
