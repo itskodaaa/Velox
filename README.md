@@ -1,332 +1,175 @@
 <p align="center">
-  <img src="assets/app_icon.png" alt="Mumblr App Icon" width="128" height="128">
+  <img src="assets/app_icon.png" alt="Mumblr App Icon" width="120" height="120">
 </p>
 
 <h1 align="center">Mumblr</h1>
 
 <p align="center">
-  <strong>Blazing-fast macOS dictation with Whisper Large v3, intelligent formatting, and an interactive desktop companion.</strong>
+  <strong>Native, zero-latency voice dictation and desktop companion for macOS.</strong><br>
+  <sub>Engineered for Apple Silicon with Whisper Large v3, MLX Metal acceleration, and context-aware LLM synthesis.</sub>
 </p>
 
 <p align="center">
-  <a href="#features">Features</a> •
-  <a href="#demo">Demo</a> •
-  <a href="#installation">Installation</a> •
-  <a href="#usage">Usage</a> •
-  <a href="#configuration">Configuration</a> •
+  <a href="#overview">Overview</a> •
+  <a href="#quickstart">Quickstart</a> •
+  <a href="#shortcuts--controls">Shortcuts</a> •
   <a href="#architecture">Architecture</a> •
-  <a href="#contributing">Contributing</a>
+  <a href="#configuration">Configuration</a> •
+  <a href="#troubleshooting">Troubleshooting</a> •
+  <a href="#development">Development</a>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/platform-macOS%2026%2B-blue?style=flat-square&logo=apple" alt="macOS 26+">
-  <img src="https://img.shields.io/badge/swift-6.4-orange?style=flat-square&logo=swift" alt="Swift 6.4">
-  <img src="https://img.shields.io/badge/python-3.11%2B-blue?style=flat-square&logo=python" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT License">
-  <img src="https://img.shields.io/badge/apple%20silicon-native-black?style=flat-square&logo=apple" alt="Apple Silicon Native">
+  <img src="https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-black?style=flat-square&logo=apple" alt="Apple Silicon">
+  <img src="https://img.shields.io/badge/swift-6.4-F05138?style=flat-square&logo=swift&logoColor=white" alt="Swift 6.4">
+  <img src="https://img.shields.io/badge/python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.11+">
+  <img src="https://img.shields.io/badge/inference-Metal%20%2F%20Groq%20LPU-00C7B7?style=flat-square" alt="Inference">
+  <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT License">
 </p>
 
 ---
 
-## What is Mumblr?
+## Overview
 
-**Mumblr** is a native macOS menu bar dictation app and desktop companion that turns your voice into perfectly formatted, publication-ready text — then pastes it wherever your cursor is. Built from scratch for Apple Silicon.
-
-Press **⌥ Space** anywhere on your Mac. Speak. Mumblr transcribes your speech using OpenAI's Whisper Large v3, intelligently formats it with an LLM polisher, and pastes it directly into whatever app you're using — all in under 2 seconds.
-
-### The Pipeline
+Mumblr is a native macOS dictation engine and interactive workspace companion built exclusively for Apple Silicon. Press `⌥ Space` in any application to speak — Mumblr captures audio, transcribes speech with Whisper Large v3, formats and refines text with context-aware LLMs, and injects the result directly into your active cursor in under two seconds.
 
 ```
-🎙️ Your Voice
-   ↓  (Option + Space)
-📊 Live Audio Metering (Floating HUD & Mascot Companion)
-   ↓
-🧠 Whisper Large v3 (Groq Cloud LPU ~1.5s / Local MLX Metal fallback)
-   ↓
-✨ LLM Polish Engine (Qwen 27B — fixes lists, punctuation, slang healing)
-   ↓
-📋 Auto-Paste at Cursor (Accessibility API → Cmd+V)
+Audio Input (⌥ Space) ──► Whisper Large v3 ──► LLM Polish Engine ──► macOS Cursor Auto-Paste
+  [AVFoundation mic]      [Groq LPU / MLX Metal]   [Qwen 27B / Rules]      [Accessibility AXUI]
 ```
+
+### Core Capabilities
+
+| Capability | Engine & Implementation | Latency & Privacy |
+| :--- | :--- | :--- |
+| **Hybrid STT Pipeline** | Cloud Groq LPU (`whisper-large-v3`) with zero-config Apple Silicon MLX Metal fallback | ~1.5s cloud / fully offline local |
+| **Context-Aware Polish** | Multi-provider LLM post-processing (Qwen 27B, Ollama, LM Studio) or zero-overhead rule engine | Heals phonetic mishears, strips fillers, structures lists |
+| **Active Screen Context** | macOS `AXUIElement` inspection captures active app name, window title, and selected text | Technical terms and variable names transcribe accurately |
+| **Desktop Companion** | Real-time SwiftUI HUD with audio metering, reactive cursor gaze, and typing awareness | Hardware-accelerated, <1% idle CPU footprint |
+| **Flow Focus Timer** | Integrated Pomodoro deep-work presets (15m, 25m, 45m, 60m) with audio chimes | Visual companion morphs seamlessly between work & dictation |
+| **Web Control Studio** | Dark-glass control panel at `http://127.0.0.1:18765` | Real-time transcription history, latency metrics, provider health |
 
 ---
 
-## Features
-
-### 🚀 Blazing Fast
-- **Cloud mode**: Whisper Large v3 on Groq LPU — full transcription in **~1.5 seconds**
-- **Local fallback**: MLX Whisper Large v3 Turbo on Apple Silicon Metal GPU — works offline
-- **Automatic failover**: If Groq is unreachable, Mumblr silently switches to local inference
-
-### 🧠 Intelligent Formatting
-- **Numbered lists**: Say *"Number 1, review the PR. Number 2, send the invoice"* → clean markdown list
-- **Self-correction**: Say *"meet at 10… actually make that 3 PM"* → outputs *"meet at 3 PM"*
-- **Filler removal**: Strips *"um"*, *"uh"*, *"you know"* seamlessly
-- **Phonetic healing**: Cross-references your custom vocabulary to fix accent-related mishears (e.g. *"half hour abeg"* → *"How far, abeg"*)
-
-### 🎯 Screen Context Awareness
-- Reads your **active app name**, **window title**, and **selected text** via macOS Accessibility APIs
-- Feeds these as context cues to Whisper and the polisher for domain-specific accuracy
-- Variable names, file names, and technical terms from your screen are transcribed correctly
-
-### ⚡ Flow Mode (Focus Timer)
-- Right-click the desktop mascot anytime to trigger **Flow Mode** (Pomodoro / Deep Work)
-- Presets: **25 min Focus**, **45 min Deep Work**, **60 min Flow State**, **15 min Quick Sprint**
-- Real-time countdown clock stays pinned beside your pet, keeping you locked in
-- Smoothly morphs into voice waveform when dictating, and morphs back when finished
-- Native macOS chime and banner notification when sessions complete
-
-### 🎛️ De-Cluttered Two-Pane Control Center
-- High-end sidebar navigation with 4 dedicated panes: **Dictate**, **Flow**, **Companion**, **Settings**
-- Ultra-clean first impression on click with zero visual clutter
-- Tactile frosted microphone orb with live reactive audio pulse
-- Fast toggle between 0ms offline rules and cloud LLM polish
-
-### 🤖 Desktop Pet Companion & Interactive Mascots
-- **4 Expressive Characters**: **GearBot** (Curious Cyber Inventor), **Neko** (Cozy Cat Companion), **Luna** (Gentle Celestial Spirit), and **Kuro** (Clever Shadow Fox)
-- **Live Cursor Tracking**: Smoothly looks left-to-right following your cursor when nearby — zero polling, zero mouse lag, and zero battery drain (passive ~35Hz event monitor)
-- **Interactive Typing Side-Eye**: Notices when you're typing in any application and casts a hilarious skeptical side-eye glance with tilted ears and cocked head
-- **Tactile Click Reactions**: Tap or click for playful bounce animations, heart bursts, and sound effects
-- **Morphing Waveform**: Morphs seamlessly into a voice equalizing harmonic bar while listening
-- **Dock & Edge Snapping**: Snaps to bottom-center (dock-aware) or screen edges with fluid glide
-- **6 Accent Colors**: Amber, Rose, Emerald, Cyan, Purple, and Monochrome
-
-### 🎛️ Web Dashboard
-- Beautiful dark-mode dashboard at `http://localhost:18765`
-- Full transcription history with latency stats and cost tracking
-- Live provider connection testing
-- HUD customization preview
-
-### 🔌 Multi-Provider LLM Support
-| Provider | Type | Speed | Cost |
-|----------|------|-------|------|
-| **Groq** (default) | Cloud LPU | ~400ms | Free tier |
-| **OpenRouter** | Cloud | ~800ms | Pay-per-token |
-| **Ollama** | Local | ~2–5s | Free |
-| **LM Studio** | Local | ~2–5s | Free |
-| **Local Rules** | Offline | 0ms | Free |
-
----
-
-## Demo
-
-> **Spoken input:**
-> *"Test number one, here are three tasks for today. Number one, review the pull request on GitHub. Number two, send the updated invoice to the client. Number three, prepare the slide deck for our afternoon meeting."*
-
-**Output:**
-
-```
-Test 1: Here are three tasks for today.
-1. Review the pull request on GitHub.
-2. Send the updated invoice to the client.
-3. Prepare the slide deck for our afternoon meeting.
-```
-
-⏱️ Total latency: **2.3 seconds** (STT: 1.7s + Polish: 0.5s)
-
----
-
-## Installation
+## Quickstart
 
 ### Prerequisites
 
-- **macOS 26+** on Apple Silicon (M1/M2/M3/M4)
-- **Xcode Command Line Tools**: `xcode-select --install`
-- **Python 3.11+** with pip
-- **A Groq API key** (free): [console.groq.com](https://console.groq.com)
+- macOS running on Apple Silicon (M1/M2/M3/M4)
+- Xcode Command Line Tools (`xcode-select --install`)
+- Python 3.11+
+- Groq API Key *(free tier supported for ~1.5s cloud transcription)*: [console.groq.com](https://console.groq.com)
 
-### Quick Install
+### 1. Build and Install
 
 ```bash
-# 1. Clone the repository
+# Clone the repository
 git clone https://github.com/itskodaaa/mumblr.git
 cd mumblr
 
-# 2. Set up the Python environment
+# Create environment and install runtime dependencies
 python3 -m venv .venv
 source .venv/bin/activate
 pip install mlx mlx-whisper httpx numpy soundfile
 
-# 3. Configure your API key
+# Compile native binary, code-sign, and bundle into /Applications/Mumblr.app
+./build.sh
+```
+
+### 2. Configure & Run
+
+```bash
+# Configure your credentials and preferences
 mkdir -p ~/.mumblr
 cat > ~/.mumblr/config.json << 'EOF'
 {
   "stt_engine": "groq",
-  "groq_key": "YOUR_GROQ_API_KEY_HERE",
+  "groq_key": "YOUR_GROQ_API_KEY",
   "provider": "groq",
-  "use_llm_polish": true,
-  "groq_model": "whisper-large-v3",
-  "groq_polish_model": "qwen/qwen3.8-27b",
-  "custom_vocab": "GitHub, PR, Mumblr",
-  "hud_position": "bottom_center",
-  "hud_character": "gearbot",
-  "hud_color": "amber",
-  "hud_always_show": true
+  "use_llm_polish": true
 }
 EOF
 
-# 4. Build and install the native app
-chmod +x build.sh
-./build.sh
-
-# 5. Start the inference daemon
+# Launch the daemon and start Mumblr
 nohup .venv/bin/python mumblr_daemon.py > /tmp/mumblr_daemon.log 2>&1 &
-
-# 6. Launch Mumblr
 open /Applications/Mumblr.app
 ```
 
-### First Launch Permissions
-
-Mumblr will request two macOS permissions on first launch:
-
-1. **Microphone** — Required to capture audio for dictation
-2. **Accessibility** — Required for global hotkeys and auto-paste
-
-Grant both in **System Settings → Privacy & Security**.
+> **First Launch:** Grant **Microphone** and **Accessibility** permissions in *System Settings → Privacy & Security* when prompted.
 
 ---
 
-## Usage
+## Shortcuts & Controls
 
-### Global Shortcuts
-
-| Shortcut | Action |
-|----------|--------|
-| **⌥ Space** | Toggle recording (default) |
-| **F8** | Toggle recording |
-| **⌃ Space** | Toggle recording |
-| **⌘⇧D** | Toggle recording |
-| **Hold ⌥** | Hold-to-talk (release to transcribe) |
-
-### Menu Bar
-
-Click the Mumblr icon in the menu bar to access:
-- Quick record button
-- Engine selector (Local Rules / LLM Polish)
-- Companion mascot picker
-- Position & dock snapping controls
-- Dashboard link
-
-### CLI Trigger
-
-```bash
-# Toggle recording from any terminal or script
-touch /tmp/mumblr_toggle
-```
-
-### Web Dashboard
-
-Open `http://localhost:18765` in your browser for:
-- Full transcription history
-- Provider settings & connection testing
-- HUD customization
-- Cost analytics
-
----
-
-## Configuration
-
-All settings are stored in `~/.mumblr/config.json`:
-
-```jsonc
-{
-  // Speech-to-Text Engine
-  "stt_engine": "groq",           // "groq" (cloud) or "local_mlx" (offline)
-  "groq_key": "",                 // Your Groq API key (free at console.groq.com)
-  "groq_model": "whisper-large-v3",
-
-  // LLM Polish Engine
-  "provider": "groq",            // "groq", "openrouter", "ollama", "lmstudio", "local_rules"
-  "use_llm_polish": true,
-  "groq_polish_model": "qwen/qwen3.8-27b",
-
-  // Custom Vocabulary (comma-separated)
-  // Add domain-specific terms to improve accuracy
-  "custom_vocab": "GitHub, PR, Mumblr, model, models",
-
-  // Floating HUD
-  "hud_position": "bottom_center", // "left", "bottom_center", "right"
-  "hud_size": "compact",           // "mini", "compact", "spacious"
-  "hud_character": "gearbot",      // "gearbot", "neko", "luna", "kuro"
-  "hud_color": "amber",            // "amber", "rose", "emerald", "cyan", "purple", "monochrome"
-  "hud_always_show": true           // Desktop pet companion mode
-}
-```
-
-### Getting a Groq API Key (Free)
-
-1. Go to [console.groq.com](https://console.groq.com)
-2. Sign up (no credit card required)
-3. Create an API key
-4. Paste it in `~/.mumblr/config.json` or via the web dashboard
-
-**Free tier limits**: ~2 hours of dictation per day, 25 requests/min — more than enough for daily use.
+| Shortcut / Trigger | Action | Target / Scope |
+| :--- | :--- | :--- |
+| `⌥ Space` | Toggle Dictation | Global (Default hotkey) |
+| `F8` / `⌃ Space` / `⌘⇧D` | Alternate Hotkeys | Global |
+| `Hold ⌥` | Push-to-Talk | Transcribes immediately on key release |
+| `touch /tmp/mumblr_toggle` | IPC Trigger | Raycast / Alfred / CLI scripts / Stream Deck |
+| Menu Bar Extra | Control Center | Quick access to Dictate, Flow, Mascots, and Settings |
+| Right-click Mascot | Flow Mode Menu | Quick-select Pomodoro timers or switch companion |
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    Mumblr.app (Swift/SwiftUI)           │
-│                                                         │
-│  ┌──────────┐  ┌──────────────┐  ┌───────────────────┐  │
-│  │ Menu Bar │  │ Floating HUD │  │ Accessibility API │  │
-│  │ Popover  │  │ (Pet + Waves)│  │ (Context Capture) │  │
-│  └──────────┘  └──────────────┘  └───────────────────┘  │
-│         │              │                  │              │
-│         └──────────────┼──────────────────┘              │
-│                        │                                │
-│              POST /transcribe                           │
-│              {audio, context, config}                    │
-│ └────────────────────────┼────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────────┐
-│              mumblr_daemon.py (Python)                  │
-│              http://127.0.0.1:18765                      │
-│                                                         │
-│  ┌─────────────────┐    ┌──────────────────────────┐    │
-│  │   STT Engine     │    │   LLM Polish Engine       │    │
-│  │                 │    │                          │    │
-│  │ Groq LPU ──────┤    │ Groq Qwen 27B ──────────┤    │
-│  │ (whisper-large- │    │ (phonetic healing,       │    │
-│  │  v3, ~1.5s)     │    │  list formatting,        │    │
-│  │                 │    │  self-correction)         │    │
-│  │ MLX Metal ──────┤    │                          │    │
-│  │ (local fallback,│    │ Local Rules ─────────────┤    │
-│  │  ~8–15s on M1)  │    │ (offline, 0ms)           │    │
-│  └─────────────────┘    └──────────────────────────┘    │
-│                                                         │
-│  ┌─────────────────────────────────────────────────┐    │
-│  │  Web Dashboard (Golden Gate Glass Studio)        │    │
-│  │  History · Settings · Analytics · Provider Test  │    │
-│  └─────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────┘
-```
-
-### File Structure
-
-```
-mumblr/
-├── Sources/
-│   ├── main.swift          # Native SwiftUI app (menu bar, HUD, hotkeys, paste)
-│   └── cli.swift           # CLI toggle via DistributedNotificationCenter
-├── mumblr_daemon.py        # Python inference daemon (STT + LLM + web dashboard)
-├── build.sh                # Build, code-sign, and install script
-├── Info.plist              # macOS app bundle configuration
-├── AppIcon.icns            # App icon
-├── assets/
-│   └── app_icon.png        # App icon
-├── .gitignore
-└── README.md
+┌─────────────────────────────────────────────────────────────┐
+│                   Mumblr.app (Swift 6.4)                    │
+│                                                             │
+│   Menu Bar Extra      Floating HUD        Accessibility API │
+│  [Status / Panes]   [Mascot / Waves]    [Context & Injection]│
+└──────────────────────────────┬──────────────────────────────┘
+                               │ POST /transcribe (localhost:18765)
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│                 mumblr_daemon.py (FastAPI)                  │
+│                                                             │
+│  ┌─────────────────────────┐   ┌──────────────────────────┐ │
+│  │   Speech-to-Text        │   │   Formatting & Polish    │ │
+│  │  • Groq Cloud (~1.5s)   │──►│  • Qwen 27B / OpenRouter │ │
+│  │  • MLX Metal (Offline)  │   │  • Ollama / LM Studio    │ │
+│  │  • Automatic Failover   │   │  • Zero-latency Rules    │ │
+│  └─────────────────────────┘   └──────────────────────────┘ │
+│                                                             │
+│  Web Studio Dashboard: http://127.0.0.1:18765               │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Offline Mode
+## Configuration
 
-Mumblr works fully offline with zero cloud dependencies:
+Settings are stored in `~/.mumblr/config.json` and hot-reloaded automatically:
+
+```jsonc
+{
+  // Speech-to-Text: "groq" (cloud ~1.5s) | "local_mlx" (on-device Apple Silicon)
+  "stt_engine": "groq",
+  "groq_key": "gsk_...",
+  "groq_model": "whisper-large-v3",
+
+  // LLM Polish: "groq" | "openrouter" | "ollama" | "lmstudio" | "local_rules"
+  "provider": "groq",
+  "use_llm_polish": true,
+  "groq_polish_model": "qwen/qwen3.8-27b",
+
+  // Custom Domain Vocabulary (comma-separated hints for Whisper & LLM)
+  "custom_vocab": "GitHub, PR, Mumblr, Apple Silicon, Metal, Swift",
+
+  // Companion Interface
+  "hud_character": "gearbot",         // "gearbot" | "neko" | "bongo"
+  "hud_position": "bottom_center",    // "bottom_center" | "left" | "right"
+  "hud_color": "amber",               // "amber" | "rose" | "emerald" | "cyan" | "purple"
+  "hud_always_show": true             // Persistent desktop companion mode
+}
+```
+
+<details>
+<summary><strong>Air-Gapped / Fully Offline Configuration</strong></summary>
+
+Mumblr supports 100% private, offline execution without transmitting data over the network:
 
 ```json
 {
@@ -336,65 +179,50 @@ Mumblr works fully offline with zero cloud dependencies:
 }
 ```
 
-This uses the MLX Whisper Large v3 Turbo model running entirely on your Apple Silicon GPU. No data leaves your machine.
-
-For local LLM polish, run [Ollama](https://ollama.com) and set:
-```json
-{
-  "stt_engine": "local_mlx",
-  "provider": "ollama",
-  "ollama_model": "llama3.2"
-}
-```
+Inference runs locally using MLX Metal GPU kernels. For offline local LLM post-processing, run [Ollama](https://ollama.com) and configure `"provider": "ollama"` with `"ollama_model": "llama3.2"`.
+</details>
 
 ---
 
 ## Troubleshooting
 
-| Problem | Solution |
-|---------|----------|
-| **"Model is warming up"** | Wait ~5 seconds after starting the daemon for the local model to load |
-| **No audio detected** | Grant microphone permission in System Settings → Privacy & Security |
-| **Hotkey doesn't work** | Grant accessibility permission and restart Mumblr |
-| **Groq returns errors** | Check your API key in `~/.mumblr/config.json` or the web dashboard |
-| **Slow local transcription** | Expected on M1 (~8–15s). Use Groq cloud mode for ~1.5s latency |
+| Symptom | Probable Cause | Recommended Fix |
+| :--- | :--- | :--- |
+| **No text injected on dictation** | Missing Accessibility rights | Enable *System Settings → Privacy & Security → Accessibility*. |
+| **Audio meter remains static** | Microphone access denied | Grant access in *System Settings → Privacy & Security → Microphone*. |
+| **503 "Model is warming up"** | Metal graph compiling | Allow 3–5 seconds on first boot for MLX Metal pipeline initialization. |
+| **Cloud transcription fails** | Groq API quota or bad key | Validate key in `~/.mumblr/config.json` or run health check via Web Studio. |
+
+---
+
+## Development
+
+```bash
+# Run daemon in foreground for real-time inspection
+.venv/bin/python mumblr_daemon.py
+
+# Recompile and install the macOS application bundle
+./build.sh && open /Applications/Mumblr.app
+
+# Directly verify audio transcription endpoint
+curl -s -X POST http://127.0.0.1:18765/transcribe \
+  -H "Content-Type: application/json" \
+  -d '{"audio_path": "/tmp/test.wav", "stt_engine": "groq"}'
+```
 
 ---
 
 ## Contributing
 
-Contributions are welcome! Here's how to get started:
+Pull requests are welcome. For significant changes, please open an issue first to discuss the design:
 
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/my-feature`
-3. Make your changes
-4. Test locally with `./build.sh && open /Applications/Mumblr.app`
-5. Submit a pull request
-
-### Development Setup
-
-```bash
-# Start the daemon in foreground for debugging
-.venv/bin/python mumblr_daemon.py
-
-# Rebuild and restart the app
-./build.sh && open /Applications/Mumblr.app
-
-# Test the transcribe endpoint directly
-curl -s -X POST http://127.0.0.1:18765/transcribe \
-  -H "Content-Type: application/json" \
-  -d '{"audio_path": "/tmp/test.wav", "stt_engine": "groq", "groq_key": "YOUR_KEY"}'
-```
+1. Fork the project & create your feature branch: `git checkout -b feature/improvement`
+2. Validate locally with `./build.sh`
+3. Commit your changes: `git commit -m "feat: add capability"`
+4. Open a Pull Request
 
 ---
 
 ## License
 
-MIT License — see [LICENSE](LICENSE) for details.
-
----
-
-<p align="center">
-  Built with ❤️ on Apple Silicon<br>
-  <sub>Whisper Large v3 · Groq LPU · MLX Metal · SwiftUI</sub>
-</p>
+Mumblr is open-source software licensed under the [MIT License](LICENSE).
