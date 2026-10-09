@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.jpg" alt="Mumblr Banner" width="100%">
+  <img src="assets/app_icon.png" alt="Mumblr App Icon" width="128" height="128">
 </p>
 
 <h1 align="center">Mumblr</h1>
@@ -317,7 +317,7 @@ mumblr/
 ├── Info.plist              # macOS app bundle configuration
 ├── AppIcon.icns            # App icon
 ├── assets/
-│   └── banner.jpg          # GitHub banner
+│   └── app_icon.png        # App icon
 ├── .gitignore
 └── README.md
 ```
