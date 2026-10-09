@@ -2,16 +2,19 @@
 set -e
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP_DIR="$DIR/Mumblr.app"
+BUILD_DIR="$DIR/.build"
+APP_DIR="$BUILD_DIR/Mumblr.app"
+BIN_PATH="$BUILD_DIR/Mumblr_bin"
+mkdir -p "$BUILD_DIR"
 
 echo "==> Compiling native Swift 6.4 macOS 27 binary..."
 swiftc -O -target arm64-apple-macosx27.0 -sdk "$(xcrun --show-sdk-path)" \
   "$DIR/Sources/main.swift" \
-  -o "$DIR/Mumblr_bin"
+  -o "$BIN_PATH"
 
 echo "==> Creating macOS App Bundle..."
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
-cp "$DIR/Mumblr_bin" "$APP_DIR/Contents/MacOS/Mumblr"
+cp "$BIN_PATH" "$APP_DIR/Contents/MacOS/Mumblr"
 cp "$DIR/Info.plist" "$APP_DIR/Contents/Info.plist"
 if [ -f "$DIR/AppIcon.icns" ]; then
   cp "$DIR/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
