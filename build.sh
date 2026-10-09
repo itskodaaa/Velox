@@ -41,7 +41,6 @@ pkill -f Velox 2>/dev/null || true
 pkill -f ParakeetFlow 2>/dev/null || true
 rm -rf /Applications/Mumblr.app /Applications/Velox.app /Applications/ParakeetFlow.app 2>/dev/null || true
 cp -R "$APP_DIR" /Applications/Mumblr.app
-ln -sf /Applications/Mumblr.app /Applications/Velox.app
 codesign --force --deep --sign "$SIGN_ID" --identifier "com.mumblr.app" /Applications/Mumblr.app
 touch /Applications/Mumblr.app
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f /Applications/Mumblr.app 2>/dev/null || true
