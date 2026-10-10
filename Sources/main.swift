@@ -276,6 +276,10 @@ final class AppState: ObservableObject {
     @AppStorage("use_llm_polish") var useLlmPolish: Bool = true
     @AppStorage("custom_vocab") var customVocab: String = "Recurring Document, Recalling -> Recurring, Vozia, how far, abeg, naira, GitHub, PR, Mumblr, Vercel, LiveKit, Conduit, Docker, Next.js, CI/CD, Supabase, Tailwind, TypeScript, React, model, models"
     @AppStorage("auto_paste") var autoPaste: Bool = true
+    @AppStorage("is_hold_to_talk") var isHoldToTalk: Bool = true
+    @AppStorage("strip_fillers") var stripFillers: Bool = true
+    @AppStorage("auto_format_lists") var autoFormatLists: Bool = true
+    @AppStorage("self_correction") var selfCorrectionHealing: Bool = true
     @Published var openRouterBalanceText: String = "OpenRouter"
 
     var customVocabList: [String] {
@@ -3998,9 +4002,9 @@ final class FloatingHUDController {
         // 3. Companion Mascot Submenu (Character Emojis Preserved!)
         let mascotMenu = NSMenu()
         let bots: [(id: String, name: String)] = [
-            ("bongo", "🐾 Bongo Cat (Typing Paws)"),
-            ("neko", "🐱 Neko (Cozy Cat)"),
-            ("gearbot", "🤖 GearBot (Curious Bot)")
+            ("bongo", "Bongo Cat (Typing Paws)"),
+            ("neko", "Neko (Cozy Cat)"),
+            ("gearbot", "GearBot (Curious Bot)")
         ]
         for bot in bots {
             let item = NSMenuItem(title: bot.name, action: #selector(contextSelectMascot(_:)), keyEquivalent: "")
@@ -6181,9 +6185,9 @@ struct CompanionTabPane: View {
 
     private func mascotDisplayName(_ id: String) -> String {
         switch id.lowercased() {
-        case "neko", "cat": return "🐱 Neko"
-        case "gearbot", "bot", "gear": return "🤖 GearBot"
-        default: return "🐾 Bongo Cat"
+        case "neko", "cat": return "Neko"
+        case "gearbot", "bot", "gear": return "GearBot"
+        default: return "Bongo Cat"
         }
     }
 }
@@ -7003,6 +7007,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if AppState.shared.alwaysShowCompanion {
             FloatingHUDController.shared.show()
         }
+
+        // Show the Mumblr Desktop Studio Window
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            MumblrStudioWindowController.shared.show()
+        }
     }
 
     private func setupMenuBarIcon() {
@@ -7050,15 +7059,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func togglePopover(_ sender: AnyObject?) {
-        guard let button = statusItem.button else { return }
+        guard let _ = statusItem.button else { return }
         AppState.shared.refreshPermissions()
-        if popover.isShown {
-            popover.performClose(sender)
-        } else {
-            NSApp.activate(ignoringOtherApps: true)
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            popover.contentViewController?.view.window?.makeKey()
-        }
+        MumblrStudioWindowController.shared.toggle()
     }
 
     func closePopover() {

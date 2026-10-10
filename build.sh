@@ -9,6 +9,7 @@ mkdir -p "$BUILD_DIR"
 
 echo "==> Compiling native Swift 6.4 macOS 27 binary..."
 swiftc -O -target arm64-apple-macosx27.0 -sdk "$(xcrun --show-sdk-path)" \
+  "$DIR/Sources/DesktopStudio.swift" \
   "$DIR/Sources/main.swift" \
   -o "$BIN_PATH"
 
